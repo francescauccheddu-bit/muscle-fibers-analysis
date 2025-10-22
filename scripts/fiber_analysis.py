@@ -13,6 +13,7 @@ Questo script esegue:
 import argparse
 import os
 from pathlib import Path
+import glob
 
 import cv2
 import numpy as np
@@ -157,6 +158,40 @@ class MuscleAnalyzer:
         return self
 
 
+def find_images_in_data_folder():
+    """Trova tutte le immagini nella cartella data/."""
+    data_dir = Path('data')
+    if not data_dir.exists():
+        print("Errore: La cartella 'data' non esiste!")
+        return []
+    
+    extensions = ['*.tif', '*.tiff', '*.png', '*.jpg', '*.jpeg', '*.TIF', '*.TIFF', '*.PNG', '*.JPG', '*.JPEG']
+    images = []
+    
+    for ext in extensions:
+        images.extend(data_dir.glob(ext))
+    
+    images = [img for img in images if img.name != '.gitkeep']
+    
+    return sorted(images)
+
+
+def process_single_image(image_path, output_dir, threshold_method):
+    """Processa una singola immagine."""
+    print("\n" + "=" * 60)
+    print(f"ELABORAZIONE: {Path(image_path).name}")
+    print("=" * 60)
+    
+    try:
+        analyzer = MuscleAnalyzer(image_path)
+        analyzer.load_image().preprocess().segment_fibers(threshold_method=threshold_method).analyze_fibers().save_results(output_dir)
+        print("Completato con successo!")
+        return True
+    except Exception as e:
+        print(f"Errore durante l'elaborazione: {e}")
+        return False
+
+
 def main():
     """Funzione principale."""
     parser = argparse.ArgumentParser(
@@ -165,7 +200,6 @@ def main():
     parser.add_argument(
         '--input',
         type=str,
-        required=True,
         help='Percorso all\'immagine di input'
     )
     parser.add_argument(
@@ -181,23 +215,61 @@ def main():
         choices=['otsu', 'adaptive'],
         help='Metodo di thresholding (default: otsu)'
     )
+    parser.add_argument(
+        '--batch',
+        action='store_true',
+        help='Processa tutte le immagini nella cartella data/'
+    )
 
     args = parser.parse_args()
 
-    if not os.path.exists(args.input):
-        print(f"Errore: File non trovato: {args.input}")
-        return
+    if args.batch:
+        print("=" * 60)
+        print("MODALITA BATCH: Ricerca immagini in 'data/'")
+        print("=" * 60)
+        
+        images = find_images_in_data_folder()
+        
+        if not images:
+            print("\nNessuna immagine trovata nella cartella 'data/'")
+            print("Formati supportati: .tif, .tiff, .png, .jpg, .jpeg")
+            return
+        
+        print(f"\nTrovate {len(images)} immagini da processare:\n")
+        for img in images:
+            print(f"  - {img.name}")
+        print()
+        
+        success_count = 0
+        fail_count = 0
+        
+        for image_path in images:
+            if process_single_image(image_path, args.output, args.threshold):
+                success_count += 1
+            else:
+                fail_count += 1
+        
+        print("\n" + "=" * 60)
+        print("RIEPILOGO BATCH")
+        print("=" * 60)
+        print(f"Totale immagini: {len(images)}")
+        print(f"Elaborate con successo: {success_count}")
+        print(f"Errori: {fail_count}")
+        print("=" * 60)
+    
+    else:
+        if not args.input:
+            print("Errore: Devi specificare --input oppure usare --batch")
+            print("\nEsempi d'uso:")
+            print("  python scripts/fiber_analysis.py --input data/immagine.tif --output output/")
+            print("  python scripts/fiber_analysis.py --batch --output output/")
+            return
+        
+        if not os.path.exists(args.input):
+            print(f"Errore: File non trovato: {args.input}")
+            return
 
-    print("=" * 60)
-    print("ANALISI FIBRE MUSCOLARI")
-    print("=" * 60)
-
-    analyzer = MuscleAnalyzer(args.input)
-    analyzer.load_image().preprocess().segment_fibers(threshold_method=args.threshold).analyze_fibers().save_results(args.output)
-
-    print("\n" + "=" * 60)
-    print("ANALISI COMPLETATA CON SUCCESSO!")
-    print("=" * 60)
+        process_single_image(args.input, args.output, args.threshold)
 
 
 if __name__ == '__main__':
