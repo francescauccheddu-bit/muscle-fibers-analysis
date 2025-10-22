@@ -76,6 +76,39 @@ def visualize_results(original, closed, output_dir, base_name, stats):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Crea visualizzazione con colori casuali per ogni fibra
+    print("Creazione visualizzazione fibre colorate...")
+
+    # Etichetta le componenti connesse nell'originale
+    labeled_original = measure.label(original > 0)
+    n_fibers_original = labeled_original.max()
+
+    # Genera colori casuali per ogni fibra
+    np.random.seed(42)  # Per riproducibilità
+    colors_original = np.random.randint(0, 255, size=(n_fibers_original + 1, 3))
+    colors_original[0] = [0, 0, 0]  # Sfondo nero
+
+    # Crea immagine colorata
+    colored_original = colors_original[labeled_original]
+
+    # Etichetta le componenti connesse nel risultato chiuso
+    labeled_closed = measure.label(closed > 0)
+    n_fibers_closed = labeled_closed.max()
+
+    colors_closed = np.random.randint(0, 255, size=(n_fibers_closed + 1, 3))
+    colors_closed[0] = [0, 0, 0]  # Sfondo nero
+
+    colored_closed = colors_closed[labeled_closed]
+
+    # Salva visualizzazioni colorate
+    colored_orig_path = output_dir / f"{base_name}_original_colored.png"
+    cv2.imwrite(str(colored_orig_path), cv2.cvtColor(colored_original.astype(np.uint8), cv2.COLOR_RGB2BGR))
+    print(f"Originale colorato salvato in: {colored_orig_path} ({n_fibers_original} fibre)")
+
+    colored_closed_path = output_dir / f"{base_name}_closed_colored.png"
+    cv2.imwrite(str(colored_closed_path), cv2.cvtColor(colored_closed.astype(np.uint8), cv2.COLOR_RGB2BGR))
+    print(f"Chiuso colorato salvato in: {colored_closed_path} ({n_fibers_closed} fibre)")
+
     # Crea immagine delle differenze
     # Verde = pixel aggiunti (contorni chiusi)
     # Rosso = pixel rimossi
