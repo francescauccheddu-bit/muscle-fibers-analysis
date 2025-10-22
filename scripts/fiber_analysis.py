@@ -21,6 +21,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from skimage import filters, measure, morphology, segmentation
 from skimage.color import label2rgb
+from skimage.segmentation import find_boundaries
 
 
 class MuscleAnalyzer:
@@ -38,6 +39,7 @@ class MuscleAnalyzer:
         self.preprocessed = None
         self.segmented = None
         self.results = None
+        self.boundaries = None
 
     def load_image(self):
         """Carica l'immagine in grayscale."""
@@ -73,6 +75,9 @@ class MuscleAnalyzer:
         binary = morphology.remove_small_objects(binary, min_size=50)
         binary = morphology.remove_small_holes(binary, area_threshold=50)
         self.segmented = measure.label(binary)
+
+        # Trova i bordi
+        self.boundaries = find_boundaries(self.segmented, mode='outer')
 
         n_fibers = self.segmented.max()
         print(f"Segmentazione completata: {n_fibers} fibre identificate")
@@ -123,37 +128,65 @@ class MuscleAnalyzer:
 
         base_name = Path(self.image_path).stem
 
+        # Salva CSV con dati
         csv_path = output_dir / f"{base_name}_results.csv"
         self.results.to_csv(csv_path, index=False)
         print(f"Risultati salvati in: {csv_path}")
 
-        fig, axes = plt.subplots(2, 2, figsize=(15, 15))
+        # Crea visualizzazione principale
+        fig, axes = plt.subplots(2, 3, figsize=(20, 13))
 
+        # Immagine originale
         axes[0, 0].imshow(self.image, cmap='gray')
-        axes[0, 0].set_title('Immagine Originale')
+        axes[0, 0].set_title('Immagine Originale', fontsize=12, fontweight='bold')
         axes[0, 0].axis('off')
 
+        # Immagine preprocessata
         axes[0, 1].imshow(self.preprocessed, cmap='gray')
-        axes[0, 1].set_title('Preprocessing')
+        axes[0, 1].set_title('Preprocessing', fontsize=12, fontweight='bold')
         axes[0, 1].axis('off')
 
+        # Segmentazione con overlay
         image_label_overlay = label2rgb(self.segmented, image=self.image, bg_label=0)
-        axes[1, 0].imshow(image_label_overlay)
-        axes[1, 0].set_title(f'Segmentazione ({self.segmented.max()} fibre)')
+        axes[0, 2].imshow(image_label_overlay)
+        axes[0, 2].set_title(f'Segmentazione ({self.segmented.max()} fibre)', fontsize=12, fontweight='bold')
+        axes[0, 2].axis('off')
+
+        # Bordi sovrapposti all'originale
+        image_with_boundaries = self.image.copy()
+        if len(image_with_boundaries.shape) == 2:
+            image_with_boundaries = cv2.cvtColor(image_with_boundaries, cv2.COLOR_GRAY2RGB)
+        image_with_boundaries[self.boundaries] = [255, 0, 0]  # Rosso
+        axes[1, 0].imshow(image_with_boundaries)
+        axes[1, 0].set_title('Bordi delle Fibre (rosso)', fontsize=12, fontweight='bold')
         axes[1, 0].axis('off')
 
-        axes[1, 1].hist(self.results['area'], bins=30, edgecolor='black')
-        axes[1, 1].set_title('Distribuzione Aree Fibre')
-        axes[1, 1].set_xlabel('Area (pixel²)')
-        axes[1, 1].set_ylabel('Frequenza')
-        axes[1, 1].grid(True, alpha=0.3)
+        # Solo bordi su sfondo nero
+        boundaries_only = np.zeros_like(self.image)
+        boundaries_only[self.boundaries] = 255
+        axes[1, 1].imshow(boundaries_only, cmap='gray')
+        axes[1, 1].set_title('Solo Bordi', fontsize=12, fontweight='bold')
+        axes[1, 1].axis('off')
+
+        # Istogramma aree
+        axes[1, 2].hist(self.results['area'], bins=30, edgecolor='black')
+        axes[1, 2].set_title('Distribuzione Aree Fibre', fontsize=12, fontweight='bold')
+        axes[1, 2].set_xlabel('Area (pixel²)')
+        axes[1, 2].set_ylabel('Frequenza')
+        axes[1, 2].grid(True, alpha=0.3)
 
         plt.tight_layout()
 
+        # Salva figura
         fig_path = output_dir / f"{base_name}_analysis.png"
         plt.savefig(fig_path, dpi=300, bbox_inches='tight')
         print(f"Visualizzazione salvata in: {fig_path}")
         plt.close()
+
+        # Salva immagine separata solo con i bordi
+        boundaries_path = output_dir / f"{base_name}_boundaries.png"
+        cv2.imwrite(str(boundaries_path), image_with_boundaries)
+        print(f"Immagine bordi salvata in: {boundaries_path}")
 
         return self
 
