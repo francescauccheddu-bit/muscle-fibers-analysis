@@ -165,7 +165,7 @@ def find_images_in_data_folder():
         print("Errore: La cartella 'data' non esiste!")
         return []
     
-    extensions = ['*.tif', '*.tiff', '*.png', '*.jpg', '*.jpeg', '*.TIF', '*.TIFF', '*.PNG', '*.JPG', '*.JPEG']
+    extensions = ['*.tif', '*.tiff', '*.png', '*.jpg', '*.jpeg']
     images = []
     
     for ext in extensions:
@@ -173,7 +173,13 @@ def find_images_in_data_folder():
     
     images = [img for img in images if img.name != '.gitkeep']
     
-    return sorted(images)
+    # Rimuovi duplicati basandosi sul percorso assoluto risolto
+    unique_images = {}
+    for img in images:
+        resolved = img.resolve()
+        unique_images[str(resolved).lower()] = img
+    
+    return sorted(unique_images.values())
 
 
 def process_single_image(image_path, output_dir, threshold_method):
