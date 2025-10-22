@@ -138,6 +138,28 @@ def visualize_results(original, closed, output_dir, base_name, stats):
     cv2.imwrite(str(diff_path), cv2.cvtColor(diff_image, cv2.COLOR_RGB2BGR))
     print(f"Immagine differenze salvata in: {diff_path}")
 
+    # Crea immagine dedicata solo per le chiusure (molto visibile)
+    closures_highlight = np.zeros((*original.shape, 3), dtype=np.uint8)
+
+    # Fibre originali in grigio chiaro (per contesto)
+    closures_highlight[original > 0] = [180, 180, 180]
+
+    # Chiusure in ROSSO brillante (ben visibile!)
+    closures_highlight[added] = [255, 0, 0]
+
+    # Salva immagine chiusure
+    closures_path = output_dir / f"{base_name}_closures_only.png"
+    cv2.imwrite(str(closures_path), cv2.cvtColor(closures_highlight, cv2.COLOR_RGB2BGR))
+    print(f"Immagine solo chiusure salvata in: {closures_path}")
+
+    # Crea anche versione con solo le chiusure su sfondo nero (senza contesto)
+    closures_only_black = np.zeros((*original.shape, 3), dtype=np.uint8)
+    closures_only_black[added] = [0, 255, 255]  # Ciano brillante
+
+    closures_black_path = output_dir / f"{base_name}_closures_isolated.png"
+    cv2.imwrite(str(closures_black_path), cv2.cvtColor(closures_only_black, cv2.COLOR_RGB2BGR))
+    print(f"Immagine chiusure isolate salvata in: {closures_black_path}")
+
 
 def main():
     """Funzione principale."""
