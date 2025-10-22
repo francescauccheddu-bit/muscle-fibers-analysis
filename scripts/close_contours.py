@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 from skimage import morphology, measure
 
 
-def close_fiber_contours(binary_mask, closing_size=3, fill_holes=True):
+def close_fiber_contours(binary_mask, closing_size=3, fill_holes=True, min_fiber_size=500):
     """
     Chiude i contorni aperti nella maschera binaria.
 
@@ -24,6 +24,7 @@ def close_fiber_contours(binary_mask, closing_size=3, fill_holes=True):
         binary_mask: Maschera binaria (0=sfondo, 255=fibre)
         closing_size: Dimensione del kernel per l'operazione di closing (default: 3)
         fill_holes: Se True, riempie anche i buchi interni (default: True)
+        min_fiber_size: Area minima in pixel per considerare un oggetto come fibra (default: 500)
 
     Returns:
         Maschera binaria con contorni chiusi
@@ -31,18 +32,22 @@ def close_fiber_contours(binary_mask, closing_size=3, fill_holes=True):
     # Converti in booleano
     mask_bool = binary_mask > 0
 
-    # 1. Operazione di Closing morfologico - chiude gap piccoli
-    print(f"Applicazione closing morfologico (kernel size: {closing_size})...")
-    closed = morphology.binary_closing(mask_bool, morphology.disk(closing_size))
+    # 1. PRIMA rimuovi il rumore - oggetti troppo piccoli
+    print(f"Rimozione rumore (oggetti < {min_fiber_size} pixel)...")
+    cleaned = morphology.remove_small_objects(mask_bool, min_size=min_fiber_size)
 
-    # 2. Riempimento buchi (opzionale)
+    # 2. Operazione di Closing morfologico - chiude gap piccoli
+    print(f"Applicazione closing morfologico (kernel size: {closing_size})...")
+    closed = morphology.binary_closing(cleaned, morphology.disk(closing_size))
+
+    # 3. Riempimento buchi (opzionale)
     if fill_holes:
         print("Riempimento buchi interni...")
         closed = morphology.remove_small_holes(closed, area_threshold=100)
 
-    # 3. Pulizia: rimuovi oggetti troppo piccoli
-    print("Rimozione oggetti piccoli...")
-    closed = morphology.remove_small_objects(closed, min_size=50)
+    # 4. Pulizia finale: rimuovi eventuali nuovi piccoli oggetti
+    print("Pulizia finale...")
+    closed = morphology.remove_small_objects(closed, min_size=min_fiber_size)
 
     # Converti in uint8
     result = (closed * 255).astype(np.uint8)
@@ -222,6 +227,12 @@ def main():
         action='store_true',
         help='Non riempire i buchi interni nelle fibre'
     )
+    parser.add_argument(
+        '--min-fiber-size',
+        type=int,
+        default=500,
+        help='Area minima in pixel per considerare un oggetto come fibra (default: 500). Aumenta per filtrare più rumore'
+    )
 
     args = parser.parse_args()
 
@@ -244,7 +255,8 @@ def main():
     closed = close_fiber_contours(
         original,
         closing_size=args.closing_size,
-        fill_holes=not args.no_fill_holes
+        fill_holes=not args.no_fill_holes,
+        min_fiber_size=args.min_fiber_size
     )
 
     # Analizza miglioramenti
