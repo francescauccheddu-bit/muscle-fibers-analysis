@@ -107,17 +107,15 @@ def create_visualizations(image, segmented, open_contours, closed_contours, outp
     print("Calcolo boundaries...")
     boundaries = find_boundaries(segmented, mode='outer')
     
-    # Crea maschera per i contorni aperti
+    # Crea maschera per i contorni aperti (METODO OTTIMIZZATO)
     print("Identificazione contorni aperti/chiusi...")
     open_labels = set([c['label'] for c in open_contours])
-    
-    # Crea mappa per identificare quali boundaries appartengono a fibre aperte
-    open_boundary_mask = np.zeros(segmented.shape, dtype=bool)
-    for label in open_labels:
-        # Dilata leggermente la maschera della fibra per catturare il boundary
-        fiber_mask = segmented == label
-        dilated = morphology.dilation(fiber_mask, morphology.disk(1))
-        open_boundary_mask |= (dilated & boundaries)
+
+    # Crea maschera con solo le fibre aperte - MOLTO più veloce!
+    open_fibers_mask = np.isin(segmented, list(open_labels))
+
+    # I bordi delle fibre aperte sono quelli che toccano la maschera delle fibre aperte
+    open_boundary_mask = boundaries & morphology.dilation(open_fibers_mask, morphology.disk(1))
     
     # 1. Visualizzazione completa con contorni colorati
     print("Creazione visualizzazioni...")
