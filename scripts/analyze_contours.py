@@ -150,7 +150,14 @@ def identify_closed_contours_from_mask(cleaned_mask, skeleton, min_area=100, max
     h, w = skeleton.shape
     candidate_cycles = []
 
+    # OTTIMIZZAZIONE: Riutilizza la stessa maschera invece di crearne migliaia
+    contour_mask = np.zeros((h, w), dtype=np.uint8)
+
     for idx, contour in enumerate(contours):
+        # Mostra progresso ogni 500 cicli
+        if (idx + 1) % 500 == 0:
+            print(f"  Analizzati {idx + 1}/{len(contours)} cicli...")
+
         # Calcola area
         area = cv2.contourArea(contour)
 
@@ -162,15 +169,9 @@ def identify_closed_contours_from_mask(cleaned_mask, skeleton, min_area=100, max
         if max_area is not None and area > max_area:
             continue
 
-        # Crea maschera per questo contorno
-        contour_mask = np.zeros_like(skeleton)
-        cv2.drawContours(contour_mask, [contour], -1, 255, thickness=cv2.FILLED)
-
-        # Verifica se tocca i bordi
-        touches_border = (
-            np.any(contour_mask[0, :] > 0) or np.any(contour_mask[-1, :] > 0) or
-            np.any(contour_mask[:, 0] > 0) or np.any(contour_mask[:, -1] > 0)
-        )
+        # Verifica se tocca i bordi usando bounding box (più veloce!)
+        x, y, w_box, h_box = cv2.boundingRect(contour)
+        touches_border = (x == 0 or y == 0 or (x + w_box) >= w or (y + h_box) >= h)
 
         if touches_border:
             continue
@@ -182,14 +183,11 @@ def identify_closed_contours_from_mask(cleaned_mask, skeleton, min_area=100, max
             cy = M["m01"] / M["m00"]
             centroid = (cy, cx)  # (row, col) = (y, x)
         else:
-            # Fallback: usa boundingRect
-            x, y, w_box, h_box = cv2.boundingRect(contour)
             centroid = (y + h_box/2, x + w_box/2)
 
-        # Questo è un ciclo candidato valido
+        # Questo è un ciclo candidato valido - MA NON salviamo la maschera per risparmiare memoria!
         candidate_cycles.append({
             'contour': contour,
-            'mask': contour_mask,
             'area': area,
             'centroid': centroid
         })
@@ -227,7 +225,12 @@ def identify_closed_contours_from_mask(cleaned_mask, skeleton, min_area=100, max
 
         closed_count += 1
 
-        print(f"  Ciclo chiuso {closed_count}: area={cycle['area']:.0f} px, centroid=({cycle['centroid'][0]:.1f}, {cycle['centroid'][1]:.1f})")
+        # Mostra progresso ogni 500 cicli
+        if closed_count % 500 == 0:
+            print(f"  Processati {closed_count}/{len(candidate_cycles) - start_idx} cicli...")
+
+        if closed_count % 100 == 0 or closed_count <= 10:
+            print(f"  Ciclo chiuso {closed_count}: area={cycle['area']:.0f} px, centroid=({cycle['centroid'][0]:.1f}, {cycle['centroid'][1]:.1f})")
 
         # Se siamo in modalità debug, colora solo il ciclo specificato
         if debug_single_cycle is not None:
@@ -238,11 +241,15 @@ def identify_closed_contours_from_mask(cleaned_mask, skeleton, min_area=100, max
             else:
                 print(f"  >>> QUESTO È IL CICLO DA COLORARE! <<<")
 
+        # Ricrea la maschera al volo (per risparmio memoria)
+        contour_mask.fill(0)  # Pulisci array esistente
+        cv2.drawContours(contour_mask, [cycle['contour']], -1, 255, thickness=cv2.FILLED)
+
         # Aggiungi alla maschera riempita
-        filled_mask = cv2.bitwise_or(filled_mask, cycle['mask'])
+        filled_mask = cv2.bitwise_or(filled_mask, contour_mask)
 
         # Trova le linee dello scheletro che circondano quest'area
-        dilated = cv2.dilate(cycle['mask'], np.ones((3, 3), np.uint8), iterations=1)
+        dilated = cv2.dilate(contour_mask, np.ones((3, 3), np.uint8), iterations=1)
         cycle_skeleton = cv2.bitwise_and(skeleton, dilated)
         cycle_lines_mask = cv2.bitwise_or(cycle_lines_mask, cycle_skeleton)
 
