@@ -70,11 +70,13 @@ def identify_closed_contours(skeleton, min_area=100):
     """
     Identifica i percorsi chiusi (cicli) nello scheletro.
 
-    Un percorso è chiuso se esiste un ciclo: da un pixel puoi tornare
-    allo stesso pixel seguendo i pixel connessi dello scheletro.
+    Trova solo i cicli PIU' INTERNI - quelli che non contengono altri cicli.
 
-    Approccio: Le regioni di sfondo completamente circondate dallo scheletro
-    (che NON toccano i bordi) sono all'interno di cicli chiusi.
+    Approccio:
+    1. Trova contorni dello sfondo con gerarchia
+    2. Identifica contorni che non hanno figli (leaf nodes)
+    3. Esclude contorni che toccano i bordi
+    4. Riempie solo i cicli più interni
 
     Args:
         skeleton: Scheletro binario (linee 1 pixel)
@@ -89,76 +91,86 @@ def identify_closed_contours(skeleton, min_area=100):
     # Inverti: scheletro diventa nero, sfondo diventa bianco
     inverted = 255 - skeleton
 
-    # Etichetta componenti connesse dello sfondo
-    labeled_bg = measure.label(inverted, connectivity=2)
+    # Trova contorni con gerarchia
+    # hierarchy: [Next, Previous, First_Child, Parent]
+    contours, hierarchy = cv2.findContours(
+        inverted,
+        cv2.RETR_TREE,  # Ottieni gerarchia completa
+        cv2.CHAIN_APPROX_SIMPLE
+    )
 
-    print(f"Trovate {labeled_bg.max()} componenti connesse nello sfondo")
+    print(f"Trovati {len(contours)} contorni totali")
 
-    # Identifica quali componenti toccano il bordo
+    if len(contours) == 0 or hierarchy is None:
+        return np.zeros_like(skeleton), {
+            'total_contours': 0,
+            'closed': 0,
+            'open': 0,
+            'avg_closed_area': 0,
+            'min_closed_area': 0,
+            'max_closed_area': 0
+        }
+
+    hierarchy = hierarchy[0]  # Rimuovi dimensione extra
     h, w = skeleton.shape
-    border_labels = set()
-
-    # Bordi superiore e inferiore
-    border_labels.update(labeled_bg[0, :])
-    border_labels.update(labeled_bg[-1, :])
-
-    # Bordi sinistro e destro
-    border_labels.update(labeled_bg[:, 0])
-    border_labels.update(labeled_bg[:, -1])
-
-    # Rimuovi lo zero (sfondo)
-    border_labels.discard(0)
-
-    print(f"Componenti che toccano il bordo: {len(border_labels)}")
 
     # Crea maschera per cicli chiusi
     filled_mask = np.zeros_like(skeleton)
 
     closed_count = 0
     closed_areas = []
+    skipped_border = 0
+    skipped_parent = 0
+    skipped_small = 0
 
-    # Debug: conta componenti interne
-    internal_components = 0
-    too_small = 0
+    # Analizza ogni contorno
+    for idx, contour in enumerate(contours):
+        area = cv2.contourArea(contour)
 
-    # Per ogni componente che NON tocca il bordo
-    for region in measure.regionprops(labeled_bg):
-        label = region.label
-        area = region.area
-
-        # Salta se tocca il bordo
-        if label in border_labels:
+        # Controlla se ha figli (First_Child != -1)
+        has_children = hierarchy[idx][2] != -1
+        if has_children:
+            skipped_parent += 1
             continue
 
-        internal_components += 1
+        # Controlla se tocca il bordo
+        x_coords = contour[:, 0, 0]
+        y_coords = contour[:, 0, 1]
+        touches_border = (
+            np.any(x_coords == 0) or np.any(x_coords == w - 1) or
+            np.any(y_coords == 0) or np.any(y_coords == h - 1)
+        )
 
-        # Salta se è troppo piccola
+        if touches_border:
+            skipped_border += 1
+            continue
+
+        # Controlla area minima
         if area < min_area:
-            too_small += 1
-            print(f"  Componente {label}: area={area:.0f} (troppo piccola, min={min_area})")
+            skipped_small += 1
+            print(f"  Contorno {idx}: area={area:.0f} (troppo piccolo)")
             continue
 
-        # Questa è una regione chiusa!
-        print(f"  Componente {label}: area={area:.0f} - CICLO CHIUSO!")
-        filled_mask[labeled_bg == label] = 255
+        # Questo è un ciclo chiuso INTERNO!
+        print(f"  Contorno {idx}: area={area:.0f} - CICLO CHIUSO!")
+        cv2.drawContours(filled_mask, [contour], -1, 255, thickness=cv2.FILLED)
         closed_count += 1
         closed_areas.append(area)
 
-    print(f"Componenti interne trovate: {internal_components}")
-    print(f"Componenti troppo piccole: {too_small}")
+    print(f"\nRisultati:")
+    print(f"  Cicli chiusi interni: {closed_count}")
+    print(f"  Esclusi (hanno figli): {skipped_parent}")
+    print(f"  Esclusi (toccano bordi): {skipped_border}")
+    print(f"  Esclusi (troppo piccoli): {skipped_small}")
 
     stats = {
-        'total_components': labeled_bg.max(),
-        'border_components': len(border_labels),
+        'total_contours': len(contours),
         'closed': closed_count,
-        'open': labeled_bg.max() - len(border_labels),
+        'open': len(contours) - closed_count,
         'avg_closed_area': np.mean(closed_areas) if closed_areas else 0,
         'min_closed_area': np.min(closed_areas) if closed_areas else 0,
         'max_closed_area': np.max(closed_areas) if closed_areas else 0
     }
-
-    print(f"Cicli CHIUSI trovati: {closed_count}")
-    print(f"Percorsi APERTI: {stats['open']}")
 
     return filled_mask, stats
 
@@ -330,10 +342,9 @@ def visualize_skeleton(original, cleaned, skeleton, filled_mask, stats, output_d
     # Statistiche come testo
     stats_text = f"""STATISTICHE:
 
-Componenti sfondo: {stats['total_components']}
-Componenti bordo: {stats['border_components']}
-Cicli CHIUSI: {stats['closed']}
-Percorsi APERTI: {stats['open']}
+Contorni totali: {stats['total_contours']}
+Cicli CHIUSI (interni): {stats['closed']}
+Altri contorni: {stats['open']}
 
 Area media chiusi: {stats['avg_closed_area']:.0f} px
 Area min: {stats['min_closed_area']:.0f} px
