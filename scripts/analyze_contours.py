@@ -277,7 +277,7 @@ def identify_closed_contours_from_mask(cleaned_mask, skeleton, min_area=100, max
         'max_closed_area': np.max(closed_areas) if closed_areas else 0
     }
 
-    return filled_mask, cycle_lines_mask, centroids, stats
+    return filled_mask, cycle_lines_mask, centroids, closed_areas, stats
 
 
 def analyze_fiber_contours(binary_mask, min_contour_area=100, border_exclusion=0):
@@ -397,166 +397,75 @@ def close_open_contours(binary_mask, open_contours, max_gap=10):
     return result
 
 
-def visualize_skeleton(original, cleaned, skeleton, cycle_lines_mask, filled_mask, centroids, stats, output_dir, base_name, visualize_mode='fill', dot_radius=5):
+def visualize_skeleton(original, cleaned, skeleton, cycle_lines_mask, filled_mask, centroids, closed_areas, stats, output_dir, base_name, visualize_mode='fill', dot_radius=10):
     """Visualizza il risultato della scheletonizzazione e identificazione percorsi chiusi.
 
     Args:
         visualize_mode: 'fill' (riempi cicli in verde) o 'dot' (puntino rosso al centro)
-        dot_radius: Raggio del puntino rosso in pixel (default: 5)
+        dot_radius: Raggio del puntino rosso in pixel (default: 10)
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Creazione visualizzazioni (modalità: {visualize_mode})...")
 
-    # Scegli visualizzazione in base alla modalità
     if visualize_mode == 'dot':
         # Modalità PUNTINO ROSSO: disegna puntini rossi ai centroidi
-        filled_visual = np.zeros((*original.shape, 3), dtype=np.uint8)
-        overlay = cv2.cvtColor(original, cv2.COLOR_GRAY2RGB)
 
         print(f"  Disegno {len(centroids)} puntini rossi ai centroidi...")
-        for centroid in centroids:
-            cy, cx = int(centroid[0]), int(centroid[1])
-            # Disegna cerchio rosso pieno
-            cv2.circle(filled_visual, (cx, cy), dot_radius, (0, 0, 255), -1)  # BGR: rosso
-            cv2.circle(overlay, (cx, cy), dot_radius, (0, 0, 255), -1)  # BGR: rosso
-    else:
-        # Modalità RIEMPIMENTO VERDE (default)
-        filled_visual = np.zeros((*original.shape, 3), dtype=np.uint8)
-        filled_visual[filled_mask > 0] = [0, 255, 0]  # BGR: verde
 
-        overlay = cv2.cvtColor(original, cv2.COLOR_GRAY2RGB)
-        overlay[filled_mask > 0] = [0, 255, 0]  # BGR: verde
-
-    # Visualizzazione principale - 2x3 layout
-    fig, axes = plt.subplots(2, 3, figsize=(24, 16))
-
-    # Originale
-    axes[0, 0].imshow(original, cmap='gray')
-    axes[0, 0].set_title('Maschera Originale', fontsize=14, fontweight='bold')
-    axes[0, 0].axis('off')
-
-    # Dopo pulizia
-    axes[0, 1].imshow(cleaned, cmap='gray')
-    axes[0, 1].set_title('Dopo Pulizia Rumore', fontsize=14, fontweight='bold')
-    axes[0, 1].axis('off')
-
-    # Scheletro
-    axes[0, 2].imshow(skeleton, cmap='gray')
-    axes[0, 2].set_title('Scheletro (linee 1 pixel)', fontsize=14, fontweight='bold')
-    axes[0, 2].axis('off')
-
-    # Visualizzazione cicli (riempimento o puntini)
-    if visualize_mode == 'dot':
-        viz_title = f'Puntini Rossi ai Centroidi ({stats["closed"]} cicli)'
-        overlay_title = 'Overlay: Centroidi in Rosso'
-    else:
-        viz_title = f'Cicli Chiusi Riempiti ({stats["closed"]})'
-        overlay_title = 'Overlay: Aree Cicli Chiusi in Verde'
-
-    axes[1, 0].imshow(filled_visual)
-    axes[1, 0].set_title(viz_title, fontsize=14, fontweight='bold')
-    axes[1, 0].axis('off')
-
-    # Overlay su originale
-    axes[1, 1].imshow(overlay)
-    axes[1, 1].set_title(overlay_title, fontsize=14, fontweight='bold')
-    axes[1, 1].axis('off')
-
-    # Statistiche come testo
-    stats_text = f"""STATISTICHE:
-
-Regioni interne totali: {stats['total_regions']}
-Cicli CHIUSI (interni): {stats['closed']}
-Altri: {stats['open']}
-
-Area media chiusi: {stats['avg_closed_area']:.0f} px
-Area min: {stats['min_closed_area']:.0f} px
-Area max: {stats['max_closed_area']:.0f} px
-"""
-    axes[1, 2].text(0.1, 0.5, stats_text, fontsize=12, family='monospace',
-                    verticalalignment='center')
-    axes[1, 2].axis('off')
-
-    plt.tight_layout()
-
-    # Salva
-    vis_path = output_dir / f"{base_name}_skeleton_analysis.png"
-    plt.savefig(vis_path, dpi=300, bbox_inches='tight')
-    print(f"Visualizzazione salvata in: {vis_path}")
-    plt.close()
-
-    # Salva maschere separate
-    skeleton_path = output_dir / f"{base_name}_skeleton.png"
-    cv2.imwrite(str(skeleton_path), skeleton)
-    print(f"Scheletro salvato in: {skeleton_path}")
-
-    cleaned_path = output_dir / f"{base_name}_cleaned.png"
-    cv2.imwrite(str(cleaned_path), cleaned)
-    print(f"Maschera pulita salvata in: {cleaned_path}")
-
-    # Salva linee dei cicli chiusi
-    cycle_lines_path = output_dir / f"{base_name}_cycle_lines.png"
-    cv2.imwrite(str(cycle_lines_path), cycle_lines_mask)
-    print(f"Linee cicli chiusi salvate in: {cycle_lines_path}")
-
-    # Salva aree riempite (bianco e nero)
-    filled_path = output_dir / f"{base_name}_closed_filled.png"
-    cv2.imwrite(str(filled_path), filled_mask)
-    print(f"Aree chiuse riempite (B/N) salvate in: {filled_path}")
-
-    # Crea e salva immagine GRANDE con cicli visualizzati
-    if visualize_mode == 'dot':
-        print("\nCreazione immagine con puntini rossi...")
-        cycles_image = np.zeros((*original.shape, 3), dtype=np.uint8)
-
-        # Disegna puntini rossi
-        for centroid in centroids:
-            cy, cx = int(centroid[0]), int(centroid[1])
-            cv2.circle(cycles_image, (cx, cy), dot_radius, (0, 0, 255), -1)  # BGR: rosso
-
-        # Salva come PNG
-        cycles_path = output_dir / f"{base_name}_CICLI_PUNTINI_ROSSI.png"
-        cv2.imwrite(str(cycles_path), cycles_image)
-        print(f"\n*** IMMAGINE PUNTINI ROSSI salvata in: {cycles_path} ***")
-        print(f"    Apri questo file per vedere {stats['closed']} puntini rossi ai centroidi dei cicli!")
-
-        # Salva anche versione con overlay su originale
-        overlay_large = cv2.cvtColor(original, cv2.COLOR_GRAY2RGB)
-        for centroid in centroids:
-            cy, cx = int(centroid[0]), int(centroid[1])
-            cv2.circle(overlay_large, (cx, cy), dot_radius, (0, 0, 255), -1)  # BGR: rosso
-        overlay_path = output_dir / f"{base_name}_OVERLAY_PUNTINI.png"
-        cv2.imwrite(str(overlay_path), overlay_large)
-        print(f"    OVERLAY puntini su originale salvato in: {overlay_path}")
-
-        # Salva anche versione con pallini SULLO SKELETON (skeleton bianco + pallini rossi)
+        # 1. SKELETON con puntini rossi
         skeleton_rgb = cv2.cvtColor(skeleton, cv2.COLOR_GRAY2RGB)
         for centroid in centroids:
             cy, cx = int(centroid[0]), int(centroid[1])
             cv2.circle(skeleton_rgb, (cx, cy), dot_radius, (0, 0, 255), -1)  # BGR: rosso
         skeleton_dots_path = output_dir / f"{base_name}_SKELETON_PUNTINI.png"
         cv2.imwrite(str(skeleton_dots_path), skeleton_rgb)
-        print(f"    SKELETON con puntini rossi salvato in: {skeleton_dots_path}")
-        print(f"    *** CONTROLLA QUESTO FILE per vedere se i pallini sono sui cicli giusti! ***")
+        print(f"  Salvato: {skeleton_dots_path}")
+
+        # 2. MASCHERA ORIGINALE con puntini rossi
+        original_rgb = cv2.cvtColor(original, cv2.COLOR_GRAY2RGB)
+        for centroid in centroids:
+            cy, cx = int(centroid[0]), int(centroid[1])
+            cv2.circle(original_rgb, (cx, cy), dot_radius, (0, 0, 255), -1)  # BGR: rosso
+        overlay_path = output_dir / f"{base_name}_OVERLAY_PUNTINI.png"
+        cv2.imwrite(str(overlay_path), original_rgb)
+        print(f"  Salvato: {overlay_path}")
+
+        # 3. ISTOGRAMMA distribuzione aree
+        if len(closed_areas) > 0:
+            print(f"  Creazione istogramma distribuzione aree...")
+            fig, ax = plt.subplots(figsize=(12, 6))
+
+            # Istogramma con bins automatici
+            n, bins, patches = ax.hist(closed_areas, bins=50, edgecolor='black', alpha=0.7)
+
+            ax.set_xlabel('Area (pixel)', fontsize=12)
+            ax.set_ylabel('Frequenza (numero di cicli)', fontsize=12)
+            ax.set_title(f'Distribuzione Aree dei Cicli (n={len(closed_areas)})', fontsize=14, fontweight='bold')
+            ax.grid(True, alpha=0.3)
+
+            # Aggiungi statistiche
+            stats_text = f'Media: {stats["avg_closed_area"]:.0f} px\n'
+            stats_text += f'Min: {stats["min_closed_area"]:.0f} px\n'
+            stats_text += f'Max: {stats["max_closed_area"]:.0f} px'
+            ax.text(0.98, 0.97, stats_text, transform=ax.transAxes,
+                   fontsize=10, verticalalignment='top', horizontalalignment='right',
+                   bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+            plt.tight_layout()
+            histogram_path = output_dir / f"{base_name}_ISTOGRAMMA_AREE.png"
+            plt.savefig(histogram_path, dpi=150, bbox_inches='tight')
+            print(f"  Salvato: {histogram_path}")
+            plt.close()
     else:
-        print("\nCreazione immagine cicli verdi...")
-        cycles_image = np.zeros((*original.shape, 3), dtype=np.uint8)
-        cycles_image[filled_mask > 0] = [0, 255, 0]  # BGR: verde
+        # Modalità RIEMPIMENTO VERDE (legacy)
+        filled_visual = np.zeros((*original.shape, 3), dtype=np.uint8)
+        filled_visual[filled_mask > 0] = [0, 255, 0]  # BGR: verde
 
-        # Salva come PNG
         cycles_path = output_dir / f"{base_name}_CICLI_VERDI.png"
-        cv2.imwrite(str(cycles_path), cycles_image)
-        print(f"\n*** IMMAGINE CICLI VERDI salvata in: {cycles_path} ***")
-        print(f"    Apri questo file per vedere i {stats['closed']} cicli riempiti di verde!")
-
-        # Salva anche versione con overlay su originale
-        overlay_large = cv2.cvtColor(original, cv2.COLOR_GRAY2RGB)
-        overlay_large[filled_mask > 0] = [0, 255, 0]  # BGR: verde
-        overlay_path = output_dir / f"{base_name}_OVERLAY_CICLI.png"
-        cv2.imwrite(str(overlay_path), overlay_large)
-        print(f"    OVERLAY cicli su originale salvato in: {overlay_path}")
+        cv2.imwrite(str(cycles_path), filled_visual)
+        print(f"  Salvato: {cycles_path}")
 
 
 
@@ -693,8 +602,8 @@ def main():
     parser.add_argument(
         '--dot-radius',
         type=int,
-        default=5,
-        help='Raggio del puntino rosso in pixel (solo per --visualize-mode=dot) (default: 5)'
+        default=10,
+        help='Raggio del puntino rosso in pixel (solo per --visualize-mode=dot) (default: 10)'
     )
 
     args = parser.parse_args()
@@ -724,7 +633,7 @@ def main():
 
     # Identifica percorsi chiusi
     print("\nIdentificazione percorsi chiusi...")
-    filled_mask, cycle_lines_mask, centroids, stats = identify_closed_contours_from_mask(
+    filled_mask, cycle_lines_mask, centroids, closed_areas, stats = identify_closed_contours_from_mask(
         cleaned,  # Usa la maschera pulita, non lo skeleton!
         skeleton,  # Passa skeleton per visualizzazione
         min_area=args.min_cycle_area,
@@ -741,7 +650,7 @@ def main():
     # Visualizza
     print("\nCreazione visualizzazioni...")
     visualize_skeleton(
-        original, cleaned, skeleton, cycle_lines_mask, filled_mask, centroids, stats,
+        original, cleaned, skeleton, cycle_lines_mask, filled_mask, centroids, closed_areas, stats,
         args.output, base_name,
         visualize_mode=args.visualize_mode,
         dot_radius=args.dot_radius
