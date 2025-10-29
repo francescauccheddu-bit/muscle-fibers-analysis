@@ -3,7 +3,10 @@
 """
 Script per analizzare contorni di fibre muscolari in sezione.
 
-Pulisce il rumore e crea lo scheletro (linee di 1 pixel) dei contorni.
+1. Pulisce il rumore dalla maschera binaria
+2. Crea lo scheletro (linee di 1 pixel) dei contorni
+3. Identifica i cicli chiusi (percorsi che tornano su se stessi)
+4. Riempie le regioni dentro i cicli chiusi con verde
 """
 
 import argparse
@@ -63,73 +66,83 @@ def clean_and_skeletonize(binary_mask, min_area=500, border_exclusion=0):
     return skeleton_uint8, cleaned_uint8
 
 
-def identify_closed_contours(skeleton, min_area=100, circularity_threshold=0.3):
+def identify_closed_contours(skeleton, min_area=100):
     """
-    Identifica i percorsi chiusi nello scheletro e li riempie.
+    Identifica i percorsi chiusi (cicli) nello scheletro.
+
+    Un percorso è chiuso se esiste un ciclo: da un pixel puoi tornare
+    allo stesso pixel seguendo i pixel connessi dello scheletro.
+
+    Approccio: Le regioni di sfondo completamente circondate dallo scheletro
+    (che NON toccano i bordi) sono all'interno di cicli chiusi.
 
     Args:
         skeleton: Scheletro binario (linee 1 pixel)
-        min_area: Area minima per considerare un contorno
-        circularity_threshold: Soglia di circolarità per considerare chiuso
+        min_area: Area minima per considerare una regione chiusa
 
     Returns:
-        filled_mask: Maschera con contorni chiusi riempiti
-        stats: Statistiche sui contorni
+        filled_mask: Maschera con cicli chiusi riempiti
+        stats: Statistiche sui percorsi
     """
-    print("Identificazione percorsi chiusi...")
+    print("Identificazione cicli chiusi nello scheletro...")
 
-    # Trova contorni nello scheletro
-    contours, hierarchy = cv2.findContours(
-        skeleton,
-        cv2.RETR_EXTERNAL,
-        cv2.CHAIN_APPROX_SIMPLE
-    )
+    # Inverti: scheletro diventa nero, sfondo diventa bianco
+    inverted = 255 - skeleton
 
-    print(f"Trovati {len(contours)} contorni nello scheletro")
+    # Etichetta componenti connesse dello sfondo
+    labeled_bg = measure.label(inverted, connectivity=2)
 
-    # Maschera per contorni chiusi riempiti
+    print(f"Trovate {labeled_bg.max()} componenti connesse nello sfondo")
+
+    # Identifica quali componenti toccano il bordo
+    h, w = skeleton.shape
+    border_labels = set()
+
+    # Bordi superiore e inferiore
+    border_labels.update(labeled_bg[0, :])
+    border_labels.update(labeled_bg[-1, :])
+
+    # Bordi sinistro e destro
+    border_labels.update(labeled_bg[:, 0])
+    border_labels.update(labeled_bg[:, -1])
+
+    # Rimuovi lo zero (sfondo)
+    border_labels.discard(0)
+
+    print(f"Componenti che toccano il bordo: {len(border_labels)}")
+
+    # Crea maschera per cicli chiusi
     filled_mask = np.zeros_like(skeleton)
 
     closed_count = 0
-    open_count = 0
     closed_areas = []
 
-    for contour in contours:
-        area = cv2.contourArea(contour)
+    # Per ogni componente che NON tocca il bordo
+    for region in measure.regionprops(labeled_bg):
+        label = region.label
+        area = region.area
 
-        # Ignora contorni troppo piccoli
-        if area < min_area:
+        # Salta se tocca il bordo o è troppo piccola
+        if label in border_labels or area < min_area:
             continue
 
-        perimeter = cv2.arcLength(contour, closed=True)
-
-        # Evita divisione per zero
-        if perimeter == 0:
-            continue
-
-        # Calcola circolarità: 4π*area/perimetro²
-        # Cerchio perfetto = 1.0, linea aperta ≈ 0
-        circularity = 4 * np.pi * area / (perimeter ** 2)
-
-        if circularity > circularity_threshold:
-            # Percorso chiuso - riempi
-            cv2.drawContours(filled_mask, [contour], -1, 255, thickness=cv2.FILLED)
-            closed_count += 1
-            closed_areas.append(area)
-        else:
-            open_count += 1
+        # Questa è una regione chiusa!
+        filled_mask[labeled_bg == label] = 255
+        closed_count += 1
+        closed_areas.append(area)
 
     stats = {
-        'total': len(contours),
+        'total_components': labeled_bg.max(),
+        'border_components': len(border_labels),
         'closed': closed_count,
-        'open': open_count,
+        'open': labeled_bg.max() - len(border_labels),
         'avg_closed_area': np.mean(closed_areas) if closed_areas else 0,
         'min_closed_area': np.min(closed_areas) if closed_areas else 0,
         'max_closed_area': np.max(closed_areas) if closed_areas else 0
     }
 
-    print(f"Percorsi CHIUSI: {closed_count}")
-    print(f"Percorsi APERTI: {open_count}")
+    print(f"Cicli CHIUSI trovati: {closed_count}")
+    print(f"Percorsi APERTI: {stats['open']}")
 
     return filled_mask, stats
 
@@ -447,8 +460,7 @@ def main():
     print("\nIdentificazione percorsi chiusi...")
     filled_mask, stats = identify_closed_contours(
         skeleton,
-        min_area=100,
-        circularity_threshold=0.3
+        min_area=100
     )
 
     # Salva risultati
