@@ -117,19 +117,35 @@ def identify_closed_contours(skeleton, min_area=100):
     closed_count = 0
     closed_areas = []
 
+    # Debug: conta componenti interne
+    internal_components = 0
+    too_small = 0
+
     # Per ogni componente che NON tocca il bordo
     for region in measure.regionprops(labeled_bg):
         label = region.label
         area = region.area
 
-        # Salta se tocca il bordo o è troppo piccola
-        if label in border_labels or area < min_area:
+        # Salta se tocca il bordo
+        if label in border_labels:
+            continue
+
+        internal_components += 1
+
+        # Salta se è troppo piccola
+        if area < min_area:
+            too_small += 1
+            print(f"  Componente {label}: area={area:.0f} (troppo piccola, min={min_area})")
             continue
 
         # Questa è una regione chiusa!
+        print(f"  Componente {label}: area={area:.0f} - CICLO CHIUSO!")
         filled_mask[labeled_bg == label] = 255
         closed_count += 1
         closed_areas.append(area)
+
+    print(f"Componenti interne trovate: {internal_components}")
+    print(f"Componenti troppo piccole: {too_small}")
 
     stats = {
         'total_components': labeled_bg.max(),
@@ -314,8 +330,9 @@ def visualize_skeleton(original, cleaned, skeleton, filled_mask, stats, output_d
     # Statistiche come testo
     stats_text = f"""STATISTICHE:
 
-Totale contorni: {stats['total']}
-Percorsi CHIUSI: {stats['closed']}
+Componenti sfondo: {stats['total_components']}
+Componenti bordo: {stats['border_components']}
+Cicli CHIUSI: {stats['closed']}
 Percorsi APERTI: {stats['open']}
 
 Area media chiusi: {stats['avg_closed_area']:.0f} px
@@ -432,6 +449,12 @@ def main():
         default=50,
         help='Larghezza del bordo da escludere dall\'analisi (default: 50 pixel)'
     )
+    parser.add_argument(
+        '--min-cycle-area',
+        type=int,
+        default=50,
+        help='Area minima per considerare un ciclo chiuso (default: 50 pixel)'
+    )
 
     args = parser.parse_args()
 
@@ -460,7 +483,7 @@ def main():
     print("\nIdentificazione percorsi chiusi...")
     filled_mask, stats = identify_closed_contours(
         skeleton,
-        min_area=100
+        min_area=args.min_cycle_area
     )
 
     # Salva risultati
