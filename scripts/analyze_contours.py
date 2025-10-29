@@ -109,7 +109,7 @@ def identify_closed_contours(skeleton, min_area=100, max_area=None, exclude_larg
     """
     Identifica i percorsi chiusi (cicli) nello scheletro.
 
-    Riempie tutti i "buchi" circondati completamente dallo scheletro.
+    NUOVO APPROCCIO: Inverti lo skeleton e trova contorni (le aree bianche diventano cicli)
 
     Args:
         skeleton: Scheletro binario (linee 1 pixel)
@@ -128,167 +128,139 @@ def identify_closed_contours(skeleton, min_area=100, max_area=None, exclude_larg
         print(f"*** MODALITA DEBUG: Colorerò SOLO il ciclo #{debug_single_cycle} ***")
     print("Identificazione cicli chiusi nello scheletro...")
 
-    # Approccio:
-    # 1. Etichetta componenti scheletro separate
-    # 2. Per OGNI componente, riempi i buchi
-    # 3. Sottrai lo scheletro per ottenere le aree interne
+    # NUOVO APPROCCIO:
+    # 1. INVERTI lo skeleton: linee diventano nere, sfondo diventa bianco
+    # 2. I cicli (aree circondate da linee) diventano "isole bianche"
+    # 3. cv2.findContours trova facilmente queste isole!
 
-    # Etichetta componenti scheletro
-    skeleton_bool = skeleton > 0
-    skeleton_labeled = measure.label(skeleton_bool, connectivity=2)
-    n_components = skeleton_labeled.max()
+    print("Inversione skeleton...")
+    inverted = cv2.bitwise_not(skeleton)
 
-    print(f"Componenti scheletro: {n_components}")
-    print(f"Riempimento buchi per ogni componente (OTTIMIZZATO - usa bounding box)...")
+    # Trova contorni nell'immagine invertita
+    print("Ricerca contorni nelle aree chiuse...")
+    contours, hierarchy = cv2.findContours(inverted, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
 
-    # Per ogni componente, riempi i buchi
-    filled_all = np.zeros_like(skeleton, dtype=bool)
+    print(f"Trovati {len(contours)} contorni totali")
 
-    # Kernel per dilatazione (ispessisce lo scheletro)
-    dilate_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-
-    # Usa regionprops per ottenere bounding box di ogni componente (MOLTO PIU' VELOCE)
-    regions = measure.regionprops(skeleton_labeled)
-
-    for idx, region in enumerate(regions):
-        # Mostra progresso ogni 10 componenti
-        if (idx + 1) % 10 == 0 or (idx + 1) == n_components:
-            print(f"  Processate {idx + 1}/{n_components} componenti...")
-
-        # Ottieni bounding box: (min_row, min_col, max_row, max_col)
-        minr, minc, maxr, maxc = region.bbox
-
-        # Estrai SOLO la regione della bounding box (invece di tutta l'immagine!)
-        component_crop = (skeleton_labeled[minr:maxr, minc:maxc] == region.label).astype(np.uint8) * 255
-
-        # DILATA lo scheletro per ispessirlo
-        dilated = cv2.dilate(component_crop, dilate_kernel, iterations=2)
-
-        # Riempi i buchi nella versione dilatata (solo sulla piccola regione!)
-        filled_crop = ndi.binary_fill_holes(dilated > 0)
-
-        # Rimetti nel posto giusto nell'immagine completa
-        filled_all[minr:maxr, minc:maxc] = filled_all[minr:maxr, minc:maxc] | filled_crop
-
-    print(f"  Completato!")
-    filled_all = (filled_all * 255).astype(np.uint8)
-
-    # Le aree interne ai cicli = filled - skeleton originale
-    internal_areas = cv2.subtract(filled_all, skeleton)
-
-    print(f"Pixel riempiti totali: {np.sum(internal_areas > 0):,}")
-
-    # Ora etichetta le componenti connesse delle aree interne
-    labeled = measure.label(internal_areas, connectivity=2)
-
-    print(f"Trovate {labeled.max()} regioni interne")
-
-    # Crea maschere
-    filled_mask = np.zeros_like(skeleton)
-    cycle_lines_mask = np.zeros_like(skeleton)
-
-    closed_count = 0
-    closed_areas = []
-    centroids = []  # Lista di centroidi (y, x) dei cicli chiusi
-    skipped_border = 0
-    skipped_small = 0
-    skipped_large = 0
-    skipped_largest = 0
-
+    # Analizza ogni contorno per trovare i cicli validi
     h, w = skeleton.shape
+    candidate_cycles = []
 
-    # PRIMO PASSAGGIO: Raccogli tutte le regioni candidate e trova la più grande
-    regions_list = measure.regionprops(labeled)
-    candidate_regions = []
+    for idx, contour in enumerate(contours):
+        # Calcola area
+        area = cv2.contourArea(contour)
 
-    for region in regions_list:
-        # Ottieni la maschera di questa regione
-        region_mask = (labeled == region.label).astype(np.uint8) * 255
+        # Filtra per area minima
+        if area < min_area:
+            continue
 
-        # Controlla se tocca il bordo
+        # Filtra per area massima
+        if max_area is not None and area > max_area:
+            continue
+
+        # Crea maschera per questo contorno
+        contour_mask = np.zeros_like(skeleton)
+        cv2.drawContours(contour_mask, [contour], -1, 255, thickness=cv2.FILLED)
+
+        # Verifica se tocca i bordi
         touches_border = (
-            np.any(region_mask[0, :] > 0) or np.any(region_mask[-1, :] > 0) or
-            np.any(region_mask[:, 0] > 0) or np.any(region_mask[:, -1] > 0)
+            np.any(contour_mask[0, :] > 0) or np.any(contour_mask[-1, :] > 0) or
+            np.any(contour_mask[:, 0] > 0) or np.any(contour_mask[:, -1] > 0)
         )
 
         if touches_border:
-            skipped_border += 1
             continue
 
-        # Controlla area minima
-        if region.area < min_area:
-            skipped_small += 1
-            continue
+        # Calcola centroide usando moments
+        M = cv2.moments(contour)
+        if M["m00"] > 0:
+            cx = M["m10"] / M["m00"]
+            cy = M["m01"] / M["m00"]
+            centroid = (cy, cx)  # (row, col) = (y, x)
+        else:
+            # Fallback: usa boundingRect
+            x, y, w_box, h_box = cv2.boundingRect(contour)
+            centroid = (y + h_box/2, x + w_box/2)
 
-        # Controlla area massima (se specificata)
-        if max_area is not None and region.area > max_area:
-            skipped_large += 1
-            print(f"  Ciclo troppo grande ESCLUSO: area={region.area:.0f} px (max={max_area}), bbox={region.bbox}")
-            continue
+        # Questo è un ciclo candidato valido
+        candidate_cycles.append({
+            'contour': contour,
+            'mask': contour_mask,
+            'area': area,
+            'centroid': centroid
+        })
 
-        # Questa è una regione candidata
-        candidate_regions.append((region, region_mask))
+    print(f"Cicli candidati (dopo filtri area e bordi): {len(candidate_cycles)}")
+
+    # Ordina per area (decrescente) per identificare il più grande
+    candidate_cycles.sort(key=lambda x: x['area'], reverse=True)
 
     # Se richiesto, identifica ed escludi il ciclo più grande
     # MA SOLO se ci sono almeno 2 cicli (se c'è solo 1 ciclo, è valido!)
-    largest_region_label = None
-    if exclude_largest and len(candidate_regions) >= 2:
-        largest_region = max(candidate_regions, key=lambda x: x[0].area)
-        largest_region_label = largest_region[0].label
-        print(f"  Ciclo PIÙ GRANDE identificato: area={largest_region[0].area:.0f} px (VERRÀ ESCLUSO)")
-    elif exclude_largest and len(candidate_regions) == 1:
+    start_idx = 0
+    if exclude_largest and len(candidate_cycles) >= 2:
+        largest = candidate_cycles[0]
+        print(f"  Ciclo PIÙ GRANDE identificato: area={largest['area']:.0f} px (VERRÀ ESCLUSO)")
+        start_idx = 1  # Salta il primo (più grande)
+    elif exclude_largest and len(candidate_cycles) == 1:
         print(f"  Solo 1 ciclo trovato - NON viene escluso (è l'unico ciclo valido!)")
 
-    # SECONDO PASSAGGIO: Processa tutte le regioni tranne la più grande
-    for region, region_mask in candidate_regions:
-        # Escludi il ciclo più grande se richiesto
-        if exclude_largest and region.label == largest_region_label:
-            skipped_largest += 1
-            print(f"  Ciclo più grande ESCLUSO: area={region.area:.0f} px, bbox={region.bbox}")
-            continue
+    # Crea maschere e raccogli statistiche
+    filled_mask = np.zeros_like(skeleton)
+    cycle_lines_mask = np.zeros_like(skeleton)
+    centroids = []
+    closed_areas = []
 
-        # Questa è un'area interna a un ciclo chiuso!
+    closed_count = 0
+    skipped_border = 0
+    skipped_small = 0
+    skipped_large = 0
+    skipped_largest = 1 if (exclude_largest and len(candidate_cycles) >= 2) else 0
+
+    # Processa i cicli validi (partendo da start_idx per escludere il più grande se necessario)
+    for idx in range(start_idx, len(candidate_cycles)):
+        cycle = candidate_cycles[idx]
+
         closed_count += 1
-        centroid = region.centroid  # (row, col) = (y, x)
-        print(f"  Ciclo chiuso {closed_count}: area={region.area:.0f} px, centroid=({centroid[0]:.1f}, {centroid[1]:.1f})")
+
+        print(f"  Ciclo chiuso {closed_count}: area={cycle['area']:.0f} px, centroid=({cycle['centroid'][0]:.1f}, {cycle['centroid'][1]:.1f})")
 
         # Se siamo in modalità debug, colora solo il ciclo specificato
         if debug_single_cycle is not None:
             if closed_count != debug_single_cycle:
-                closed_areas.append(region.area)
-                centroids.append(centroid)
+                closed_areas.append(cycle['area'])
+                centroids.append(cycle['centroid'])
                 continue  # Salta questo ciclo
             else:
                 print(f"  >>> QUESTO È IL CICLO DA COLORARE! <<<")
 
         # Aggiungi alla maschera riempita
-        filled_mask[region_mask > 0] = 255
+        filled_mask = cv2.bitwise_or(filled_mask, cycle['mask'])
 
         # Trova le linee dello scheletro che circondano quest'area
-        dilated = cv2.dilate(region_mask, np.ones((3, 3), np.uint8), iterations=1)
+        dilated = cv2.dilate(cycle['mask'], np.ones((3, 3), np.uint8), iterations=1)
         cycle_skeleton = cv2.bitwise_and(skeleton, dilated)
         cycle_lines_mask = cv2.bitwise_or(cycle_lines_mask, cycle_skeleton)
 
-        closed_areas.append(region.area)
-        centroids.append(centroid)
+        closed_areas.append(cycle['area'])
+        centroids.append(cycle['centroid'])
 
     # Conta pixel riempiti
     filled_pixels = np.sum(filled_mask > 0)
     total_pixels = filled_mask.size
 
     print(f"\nRisultati:")
-    print(f"  Cicli chiusi interni: {closed_count}")
-    print(f"  Esclusi (toccano bordi): {skipped_border}")
-    print(f"  Esclusi (troppo piccoli): {skipped_small}")
-    print(f"  Esclusi (troppo grandi per max_area): {skipped_large}")
-    if exclude_largest:
+    print(f"  Contorni totali trovati: {len(contours)}")
+    print(f"  Cicli candidati (dopo filtri): {len(candidate_cycles)}")
+    print(f"  Cicli chiusi accettati: {closed_count}")
+    if exclude_largest and skipped_largest > 0:
         print(f"  Esclusi (ciclo più grande): {skipped_largest}")
     print(f"  Pixel riempiti: {filled_pixels:,} ({filled_pixels/total_pixels*100:.2f}% dell'immagine)")
 
     stats = {
-        'total_regions': labeled.max(),
+        'total_regions': len(contours),
         'closed': closed_count,
-        'open': labeled.max() - closed_count,
+        'open': len(contours) - closed_count,
         'avg_closed_area': np.mean(closed_areas) if closed_areas else 0,
         'min_closed_area': np.min(closed_areas) if closed_areas else 0,
         'max_closed_area': np.max(closed_areas) if closed_areas else 0
