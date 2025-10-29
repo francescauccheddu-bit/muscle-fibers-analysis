@@ -137,7 +137,7 @@ def identify_closed_contours(skeleton, min_area=100, max_area=None, debug_single
     n_components = skeleton_labeled.max()
 
     print(f"Componenti scheletro: {n_components}")
-    print(f"Riempimento buchi per ogni componente (potrebbe richiedere alcuni secondi)...")
+    print(f"Riempimento buchi per ogni componente (OTTIMIZZATO - usa bounding box)...")
 
     # Per ogni componente, riempi i buchi
     filled_all = np.zeros_like(skeleton, dtype=bool)
@@ -145,22 +145,28 @@ def identify_closed_contours(skeleton, min_area=100, max_area=None, debug_single
     # Kernel per dilatazione (ispessisce lo scheletro)
     dilate_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
 
-    for comp_id in range(1, n_components + 1):
+    # Usa regionprops per ottenere bounding box di ogni componente (MOLTO PIU' VELOCE)
+    regions = measure.regionprops(skeleton_labeled)
+
+    for idx, region in enumerate(regions):
         # Mostra progresso ogni 10 componenti
-        if comp_id % 10 == 0 or comp_id == n_components:
-            print(f"  Processate {comp_id}/{n_components} componenti...")
+        if (idx + 1) % 10 == 0 or (idx + 1) == n_components:
+            print(f"  Processate {idx + 1}/{n_components} componenti...")
 
-        # Estrai questa componente
-        component_mask = (skeleton_labeled == comp_id).astype(np.uint8) * 255
+        # Ottieni bounding box: (min_row, min_col, max_row, max_col)
+        minr, minc, maxr, maxc = region.bbox
 
-        # DILATA lo scheletro per ispessirlo (aiuta binary_fill_holes)
-        dilated = cv2.dilate(component_mask, dilate_kernel, iterations=2)
+        # Estrai SOLO la regione della bounding box (invece di tutta l'immagine!)
+        component_crop = (skeleton_labeled[minr:maxr, minc:maxc] == region.label).astype(np.uint8) * 255
 
-        # Riempi i buchi nella versione dilatata
-        filled_component = ndi.binary_fill_holes(dilated > 0)
+        # DILATA lo scheletro per ispessirlo
+        dilated = cv2.dilate(component_crop, dilate_kernel, iterations=2)
 
-        # Aggiungi al risultato totale
-        filled_all = filled_all | filled_component
+        # Riempi i buchi nella versione dilatata (solo sulla piccola regione!)
+        filled_crop = ndi.binary_fill_holes(dilated > 0)
+
+        # Rimetti nel posto giusto nell'immagine completa
+        filled_all[minr:maxr, minc:maxc] = filled_all[minr:maxr, minc:maxc] | filled_crop
 
     print(f"  Completato!")
     filled_all = (filled_all * 255).astype(np.uint8)
