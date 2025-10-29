@@ -126,11 +126,32 @@ def identify_closed_contours(skeleton, min_area=100, max_area=None, debug_single
         print(f"*** MODALITA DEBUG: Colorerò SOLO il ciclo #{debug_single_cycle} ***")
     print("Identificazione cicli chiusi nello scheletro...")
 
-    # Approccio: riempi tutti i buchi, poi sottrai lo scheletro originale
-    # Questo ci dà le aree INTERNE ai cicli chiusi
+    # Approccio:
+    # 1. Etichetta componenti scheletro separate
+    # 2. Per OGNI componente, riempi i buchi
+    # 3. Sottrai lo scheletro per ottenere le aree interne
 
-    # Riempi tutti i buchi
-    filled_all = ndi.binary_fill_holes(skeleton > 0).astype(np.uint8) * 255
+    # Etichetta componenti scheletro
+    skeleton_bool = skeleton > 0
+    skeleton_labeled = measure.label(skeleton_bool, connectivity=2)
+    n_components = skeleton_labeled.max()
+
+    print(f"Componenti scheletro: {n_components}")
+
+    # Per ogni componente, riempi i buchi
+    filled_all = np.zeros_like(skeleton, dtype=bool)
+
+    for comp_id in range(1, n_components + 1):
+        # Estrai questa componente
+        component_mask = (skeleton_labeled == comp_id)
+
+        # Riempi i buchi in questa componente specifica
+        filled_component = ndi.binary_fill_holes(component_mask)
+
+        # Aggiungi al risultato totale
+        filled_all = filled_all | filled_component
+
+    filled_all = (filled_all * 255).astype(np.uint8)
 
     # Le aree interne ai cicli = filled - skeleton originale
     internal_areas = cv2.subtract(filled_all, skeleton)
