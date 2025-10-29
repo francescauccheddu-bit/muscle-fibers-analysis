@@ -592,8 +592,8 @@ def main():
     parser.add_argument(
         '--min-skeleton-size',
         type=int,
-        default=50,
-        help='Dimensione minima componenti scheletro da mantenere (default: 50 pixel). Rimuove frammenti isolati sconnessi.'
+        default=0,
+        help='Dimensione minima componenti scheletro da mantenere (default: 0=disabilitato). Rimuove frammenti isolati sconnessi.'
     )
     parser.add_argument(
         '--debug-single-cycle',
