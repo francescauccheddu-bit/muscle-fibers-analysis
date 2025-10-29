@@ -63,6 +63,77 @@ def clean_and_skeletonize(binary_mask, min_area=500, border_exclusion=0):
     return skeleton_uint8, cleaned_uint8
 
 
+def identify_closed_contours(skeleton, min_area=100, circularity_threshold=0.3):
+    """
+    Identifica i percorsi chiusi nello scheletro e li riempie.
+
+    Args:
+        skeleton: Scheletro binario (linee 1 pixel)
+        min_area: Area minima per considerare un contorno
+        circularity_threshold: Soglia di circolarità per considerare chiuso
+
+    Returns:
+        filled_mask: Maschera con contorni chiusi riempiti
+        stats: Statistiche sui contorni
+    """
+    print("Identificazione percorsi chiusi...")
+
+    # Trova contorni nello scheletro
+    contours, hierarchy = cv2.findContours(
+        skeleton,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    print(f"Trovati {len(contours)} contorni nello scheletro")
+
+    # Maschera per contorni chiusi riempiti
+    filled_mask = np.zeros_like(skeleton)
+
+    closed_count = 0
+    open_count = 0
+    closed_areas = []
+
+    for contour in contours:
+        area = cv2.contourArea(contour)
+
+        # Ignora contorni troppo piccoli
+        if area < min_area:
+            continue
+
+        perimeter = cv2.arcLength(contour, closed=True)
+
+        # Evita divisione per zero
+        if perimeter == 0:
+            continue
+
+        # Calcola circolarità: 4π*area/perimetro²
+        # Cerchio perfetto = 1.0, linea aperta ≈ 0
+        circularity = 4 * np.pi * area / (perimeter ** 2)
+
+        if circularity > circularity_threshold:
+            # Percorso chiuso - riempi
+            cv2.drawContours(filled_mask, [contour], -1, 255, thickness=cv2.FILLED)
+            closed_count += 1
+            closed_areas.append(area)
+        else:
+            open_count += 1
+
+    stats = {
+        'total': len(contours),
+        'closed': closed_count,
+        'open': open_count,
+        'avg_closed_area': np.mean(closed_areas) if closed_areas else 0,
+        'min_closed_area': np.min(closed_areas) if closed_areas else 0,
+        'max_closed_area': np.max(closed_areas) if closed_areas else 0
+    }
+
+    print(f"Percorsi CHIUSI: {closed_count}")
+    print(f"Percorsi APERTI: {open_count}")
+
+    return filled_mask, stats
+
+
 def analyze_fiber_contours(binary_mask, min_contour_area=100, border_exclusion=0):
     """
     Analizza i contorni nella maschera per identificare quali sono chiusi.
@@ -180,8 +251,8 @@ def close_open_contours(binary_mask, open_contours, max_gap=10):
     return result
 
 
-def visualize_skeleton(original, cleaned, skeleton, output_dir, base_name):
-    """Visualizza il risultato della scheletonizzazione."""
+def visualize_skeleton(original, cleaned, skeleton, filled_mask, stats, output_dir, base_name):
+    """Visualizza il risultato della scheletonizzazione e identificazione percorsi chiusi."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -189,14 +260,18 @@ def visualize_skeleton(original, cleaned, skeleton, output_dir, base_name):
 
     # Crea visualizzazione a colori dello scheletro
     skeleton_colored = np.zeros((*original.shape, 3), dtype=np.uint8)
-    skeleton_colored[skeleton > 0] = [0, 255, 0]  # Verde per lo scheletro
+    skeleton_colored[skeleton > 0] = [255, 255, 255]  # Bianco per lo scheletro
 
-    # Overlay dello scheletro sull'originale
+    # Percorsi chiusi in VERDE
+    closed_green = np.zeros((*original.shape, 3), dtype=np.uint8)
+    closed_green[filled_mask > 0] = [0, 255, 0]
+
+    # Overlay percorsi chiusi su originale
     overlay = cv2.cvtColor(original, cv2.COLOR_GRAY2RGB)
-    overlay[skeleton > 0] = [0, 255, 0]
+    overlay[filled_mask > 0] = [0, 255, 0]
 
-    # Visualizzazione principale - 2x2 layout
-    fig, axes = plt.subplots(2, 2, figsize=(16, 16))
+    # Visualizzazione principale - 2x3 layout
+    fig, axes = plt.subplots(2, 3, figsize=(24, 16))
 
     # Originale
     axes[0, 0].imshow(original, cmap='gray')
@@ -209,14 +284,34 @@ def visualize_skeleton(original, cleaned, skeleton, output_dir, base_name):
     axes[0, 1].axis('off')
 
     # Scheletro
-    axes[1, 0].imshow(skeleton, cmap='gray')
-    axes[1, 0].set_title('Scheletro (linee 1 pixel)', fontsize=14, fontweight='bold')
+    axes[0, 2].imshow(skeleton, cmap='gray')
+    axes[0, 2].set_title('Scheletro (linee 1 pixel)', fontsize=14, fontweight='bold')
+    axes[0, 2].axis('off')
+
+    # Percorsi chiusi in verde
+    axes[1, 0].imshow(closed_green)
+    axes[1, 0].set_title(f'Percorsi Chiusi ({stats["closed"]})', fontsize=14, fontweight='bold')
     axes[1, 0].axis('off')
 
-    # Overlay
+    # Overlay su originale
     axes[1, 1].imshow(overlay)
-    axes[1, 1].set_title('Overlay Scheletro su Originale', fontsize=14, fontweight='bold')
+    axes[1, 1].set_title('Overlay su Originale', fontsize=14, fontweight='bold')
     axes[1, 1].axis('off')
+
+    # Statistiche come testo
+    stats_text = f"""STATISTICHE:
+
+Totale contorni: {stats['total']}
+Percorsi CHIUSI: {stats['closed']}
+Percorsi APERTI: {stats['open']}
+
+Area media chiusi: {stats['avg_closed_area']:.0f} px
+Area min: {stats['min_closed_area']:.0f} px
+Area max: {stats['max_closed_area']:.0f} px
+"""
+    axes[1, 2].text(0.1, 0.5, stats_text, fontsize=12, family='monospace',
+                    verticalalignment='center')
+    axes[1, 2].axis('off')
 
     plt.tight_layout()
 
@@ -348,6 +443,14 @@ def main():
         border_exclusion=args.exclude_border
     )
 
+    # Identifica percorsi chiusi
+    print("\nIdentificazione percorsi chiusi...")
+    filled_mask, stats = identify_closed_contours(
+        skeleton,
+        min_area=100,
+        circularity_threshold=0.3
+    )
+
     # Salva risultati
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -355,10 +458,18 @@ def main():
 
     # Visualizza
     print("\nCreazione visualizzazioni...")
-    visualize_skeleton(original, cleaned, skeleton, args.output, base_name)
+    visualize_skeleton(original, cleaned, skeleton, filled_mask, stats, args.output, base_name)
+
+    # Salva maschera percorsi chiusi
+    filled_path = output_dir / f"{base_name}_closed_filled.png"
+    cv2.imwrite(str(filled_path), filled_mask)
+    print(f"Percorsi chiusi salvati in: {filled_path}")
 
     print("\n" + "=" * 60)
-    print("COMPLETATO - Scheletro dei contorni creato")
+    print("COMPLETATO")
+    print("=" * 60)
+    print(f"Percorsi CHIUSI: {stats['closed']}")
+    print(f"Percorsi APERTI: {stats['open']}")
     print("=" * 60)
 
     print("\nANALISI COMPLETATA!")
