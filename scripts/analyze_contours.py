@@ -105,13 +105,14 @@ def clean_and_skeletonize(binary_mask, min_area=500, border_exclusion=0, min_ske
     return skeleton_uint8, cleaned_uint8
 
 
-def identify_closed_contours_from_mask(cleaned_mask, skeleton, min_area=100, max_area=None, exclude_largest=True, closing_size=3, debug_single_cycle=None):
+def identify_closed_contours_from_mask(original_mask, cleaned_mask, skeleton, min_area=100, max_area=None, exclude_largest=True, closing_size=3, debug_single_cycle=None):
     """
     Identifica i percorsi chiusi (cicli) dalla MASCHERA PULITA, non dallo skeleton.
 
     APPROCCIO DEFINITIVO: Usa la maschera pulita che ha contorni spessi e chiusi
 
     Args:
+        original_mask: Maschera originale (non processata) per identificare pixel nuovi
         cleaned_mask: Maschera pulita (prima dello skeletonization)
         skeleton: Scheletro binario (usato solo per visualizzazione)
         min_area: Area minima per considerare una regione chiusa
@@ -143,9 +144,14 @@ def identify_closed_contours_from_mask(cleaned_mask, skeleton, min_area=100, max
         mask_closed = cv2.morphologyEx(cleaned_mask, cv2.MORPH_CLOSE, kernel, iterations=1)
 
         # Calcola i pixel aggiunti dal closing
-        closing_pixels = cv2.subtract(mask_closed, cleaned_mask)
+        closing_pixels_all = cv2.subtract(mask_closed, cleaned_mask)
+
+        # Mantieni SOLO i pixel che NON erano già presenti nella maschera originale
+        # Questo mostra solo i pixel completamente nuovi creati dal morphological closing
+        closing_pixels = np.logical_and(closing_pixels_all > 0, original_mask == 0).astype(np.uint8) * 255
+
         n_closing_pixels = np.sum(closing_pixels > 0)
-        print(f"  Pixel aggiunti dal closing per chiudere gap: {n_closing_pixels}")
+        print(f"  Pixel NUOVI aggiunti dal closing (non presenti in originale): {n_closing_pixels}")
     else:
         mask_closed = cleaned_mask
 
@@ -430,15 +436,11 @@ def visualize_skeleton(original, cleaned, skeleton, filled_mask, centroids, clos
 
         print(f"  Disegno {len(centroids)} puntini rossi...")
 
-        # 1. SKELETON con puntini rossi
+        # 1. SKELETON con puntini rossi (SENZA verde)
         skeleton_rgb = cv2.cvtColor(skeleton, cv2.COLOR_GRAY2RGB)
         for centroid in centroids:
             cy, cx = int(centroid[0]), int(centroid[1])
             cv2.circle(skeleton_rgb, (cx, cy), dot_radius, (0, 0, 255), -1)  # BGR: rosso
-
-        # Se ci sono pixel da closing, aggiungi in VERDE
-        if closing_pixels is not None:
-            skeleton_rgb[closing_pixels > 0] = [0, 255, 0]  # BGR: verde per gap chiusi
 
         skeleton_dots_path = output_dir / f"{base_name}_SKELETON_PUNTINI.png"
         cv2.imwrite(str(skeleton_dots_path), skeleton_rgb)
@@ -446,13 +448,18 @@ def visualize_skeleton(original, cleaned, skeleton, filled_mask, centroids, clos
 
         # 2. MASCHERA ORIGINALE con puntini rossi e gap in verde
         original_rgb = cv2.cvtColor(original, cv2.COLOR_GRAY2RGB)
+
+        # Se ci sono pixel da closing, aggiungi in VERDE (SOLO pixel completamente nuovi)
+        if closing_pixels is not None:
+            n_green = np.sum(closing_pixels > 0)
+            if n_green > 0:
+                print(f"  Aggiunta visualizzazione {n_green} pixel verdi (gap chiusi dal morphing)...")
+                original_rgb[closing_pixels > 0] = [0, 255, 0]  # BGR: verde per gap chiusi
+
+        # Aggiungi pallini rossi DOPO il verde (così sono visibili sopra)
         for centroid in centroids:
             cy, cx = int(centroid[0]), int(centroid[1])
             cv2.circle(original_rgb, (cx, cy), dot_radius, (0, 0, 255), -1)  # BGR: rosso
-
-        # Se ci sono pixel da closing, aggiungi in VERDE
-        if closing_pixels is not None:
-            original_rgb[closing_pixels > 0] = [0, 255, 0]  # BGR: verde per gap chiusi
 
         overlay_path = output_dir / f"{base_name}_OVERLAY_PUNTINI.png"
         cv2.imwrite(str(overlay_path), original_rgb)
@@ -666,7 +673,8 @@ def main():
     # Identifica percorsi chiusi
     print("\nIdentificazione percorsi chiusi...")
     filled_mask, centroids, closed_areas, closing_pixels, stats = identify_closed_contours_from_mask(
-        cleaned,  # Usa la maschera pulita, non lo skeleton!
+        original,  # Maschera originale per identificare pixel completamente nuovi
+        cleaned,   # Maschera pulita (dopo remove_small_objects)
         skeleton,  # Passa skeleton per visualizzazione
         min_area=args.min_cycle_area,
         max_area=args.max_cycle_area,
