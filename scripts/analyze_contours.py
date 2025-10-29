@@ -149,11 +149,10 @@ def identify_closed_contours(skeleton, min_area=100):
         # Controlla area minima
         if area < min_area:
             skipped_small += 1
-            print(f"  Contorno {idx}: area={area:.0f} (troppo piccolo)")
             continue
 
         # Questo è un ciclo chiuso INTERNO!
-        print(f"  Contorno {idx}: area={area:.0f} - CICLO CHIUSO!")
+        print(f"  Ciclo chiuso {closed_count + 1}: area={area:.0f} px")
 
         # Riempi l'area interna
         cv2.drawContours(filled_mask, [contour], -1, 255, thickness=cv2.FILLED)
@@ -311,14 +310,13 @@ def visualize_skeleton(original, cleaned, skeleton, cycle_lines_mask, filled_mas
 
     print("Creazione visualizzazioni...")
 
-    # Scheletro con cicli chiusi in verde
-    skeleton_with_cycles = cv2.cvtColor(skeleton, cv2.COLOR_GRAY2RGB)
-    skeleton_with_cycles[cycle_lines_mask > 0] = [0, 255, 0]  # Cicli chiusi in VERDE
+    # Aree riempite in verde
+    filled_green = np.zeros((*original.shape, 3), dtype=np.uint8)
+    filled_green[filled_mask > 0] = [0, 255, 0]  # Aree chiuse riempite in VERDE
 
-    # Overlay su originale: scheletro bianco + cicli verdi
+    # Overlay su originale: aree riempite in verde
     overlay = cv2.cvtColor(original, cv2.COLOR_GRAY2RGB)
-    overlay[skeleton > 0] = [200, 200, 200]  # Scheletro completo in grigio chiaro
-    overlay[cycle_lines_mask > 0] = [0, 255, 0]  # Cicli chiusi in VERDE
+    overlay[filled_mask > 0] = [0, 255, 0]  # Aree chiuse in VERDE
 
     # Visualizzazione principale - 2x3 layout
     fig, axes = plt.subplots(2, 3, figsize=(24, 16))
@@ -338,14 +336,14 @@ def visualize_skeleton(original, cleaned, skeleton, cycle_lines_mask, filled_mas
     axes[0, 2].set_title('Scheletro (linee 1 pixel)', fontsize=14, fontweight='bold')
     axes[0, 2].axis('off')
 
-    # Scheletro con cicli chiusi evidenziati in verde
-    axes[1, 0].imshow(skeleton_with_cycles)
-    axes[1, 0].set_title(f'Cicli Chiusi in Verde ({stats["closed"]})', fontsize=14, fontweight='bold')
+    # Aree riempite in verde
+    axes[1, 0].imshow(filled_green)
+    axes[1, 0].set_title(f'Cicli Chiusi Riempiti ({stats["closed"]})', fontsize=14, fontweight='bold')
     axes[1, 0].axis('off')
 
     # Overlay su originale
     axes[1, 1].imshow(overlay)
-    axes[1, 1].set_title('Overlay: Scheletro (grigio) + Cicli (verde)', fontsize=14, fontweight='bold')
+    axes[1, 1].set_title('Overlay: Aree Cicli Chiusi in Verde', fontsize=14, fontweight='bold')
     axes[1, 1].axis('off')
 
     # Statistiche come testo
