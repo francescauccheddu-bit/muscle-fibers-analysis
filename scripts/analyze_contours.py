@@ -568,8 +568,8 @@ def main():
     parser.add_argument(
         '--exclude-border',
         type=int,
-        default=50,
-        help='Larghezza del bordo da escludere dall\'analisi (default: 50 pixel)'
+        default=0,
+        help='Larghezza del bordo da escludere dall\'analisi (default: 0=disabilitato)'
     )
     parser.add_argument(
         '--min-cycle-area',
