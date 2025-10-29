@@ -16,27 +16,39 @@ from skimage import morphology, measure
 from scipy import ndimage as ndi
 
 
-def analyze_fiber_contours(binary_mask, min_contour_area=100):
+def analyze_fiber_contours(binary_mask, min_contour_area=100, border_exclusion=0):
     """
     Analizza i contorni nella maschera per identificare quali sono chiusi.
 
     Args:
         binary_mask: Maschera binaria con contorni delle fibre
         min_contour_area: Area minima per considerare un contorno
+        border_exclusion: Larghezza del bordo da escludere (in pixel)
 
     Returns:
         closed_mask, open_mask, stats
     """
     print("Ricerca contorni...")
 
+    # Se richiesto, escludi il bordo
+    mask_to_analyze = binary_mask.copy()
+    if border_exclusion > 0:
+        print(f"Esclusione bordo di {border_exclusion} pixel...")
+        # Crea maschera senza bordi
+        h, w = binary_mask.shape
+        mask_to_analyze[:border_exclusion, :] = 0  # Bordo superiore
+        mask_to_analyze[-border_exclusion:, :] = 0  # Bordo inferiore
+        mask_to_analyze[:, :border_exclusion] = 0  # Bordo sinistro
+        mask_to_analyze[:, -border_exclusion:] = 0  # Bordo destro
+
     # Trova contorni usando OpenCV
     contours, hierarchy = cv2.findContours(
-        binary_mask,
+        mask_to_analyze,
         cv2.RETR_EXTERNAL,  # Solo contorni esterni
         cv2.CHAIN_APPROX_SIMPLE
     )
 
-    print(f"Trovati {len(contours)} contorni")
+    print(f"Trovati {len(contours)} contorni (dopo esclusione bordi)")
 
     closed_mask = np.zeros_like(binary_mask)
     open_mask = np.zeros_like(binary_mask)
@@ -121,8 +133,8 @@ def close_open_contours(binary_mask, open_contours, max_gap=10):
     return result
 
 
-def visualize_analysis(original, closed_mask, open_mask, closed_attempts, stats, output_dir, base_name):
-    """Visualizza i risultati dell'analisi."""
+def visualize_classification(original, closed_mask, open_mask, stats, output_dir, base_name):
+    """Visualizza la classificazione dei contorni (chiusi vs aperti)."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -140,33 +152,27 @@ def visualize_analysis(original, closed_mask, open_mask, closed_attempts, stats,
     # Contorni aperti in ROSSO
     colored[open_mask > 0] = [255, 0, 0]
 
-    # Visualizzazione principale
-    fig, axes = plt.subplots(2, 2, figsize=(16, 16))
+    # Visualizzazione principale - 1x3 layout
+    fig, axes = plt.subplots(1, 3, figsize=(24, 8))
 
     # Originale
-    axes[0, 0].imshow(original, cmap='gray')
-    axes[0, 0].set_title('Maschera Originale (Contorni)', fontsize=14, fontweight='bold')
-    axes[0, 0].axis('off')
+    axes[0].imshow(original, cmap='gray')
+    axes[0].set_title('Maschera Originale (Contorni)', fontsize=14, fontweight='bold')
+    axes[0].axis('off')
 
     # Classificazione colorata
-    axes[0, 1].imshow(colored)
-    axes[0, 1].set_title(f'Verde=Chiusi ({stats["closed"]}), Rosso=Aperti ({stats["open"]})',
+    axes[1].imshow(colored)
+    axes[1].set_title(f'Verde=Chiusi ({stats["closed"]}), Rosso=Aperti ({stats["open"]})',
                         fontsize=14, fontweight='bold')
-    axes[0, 1].axis('off')
+    axes[1].axis('off')
 
     # Solo contorni chiusi (riempiti di verde)
     green_only = np.zeros((*original.shape, 3), dtype=np.uint8)
     green_only[closed_mask > 0] = [0, 255, 0]
-    axes[1, 0].imshow(green_only)
-    axes[1, 0].set_title(f'Solo Contorni Chiusi Riempiti ({stats["closed"]})',
+    axes[2].imshow(green_only)
+    axes[2].set_title(f'Solo Contorni Chiusi Riempiti ({stats["closed"]})',
                         fontsize=14, fontweight='bold')
-    axes[1, 0].axis('off')
-
-    # Tentativi di chiusura
-    axes[1, 1].imshow(closed_attempts, cmap='gray')
-    axes[1, 1].set_title('Dopo Tentativo Chiusura Contorni Aperti',
-                        fontsize=14, fontweight='bold')
-    axes[1, 1].axis('off')
+    axes[2].axis('off')
 
     plt.tight_layout()
 
@@ -215,6 +221,12 @@ def main():
         default=10,
         help='Distanza massima gap da chiudere (default: 10 pixel)'
     )
+    parser.add_argument(
+        '--exclude-border',
+        type=int,
+        default=50,
+        help='Larghezza del bordo da escludere dall\'analisi (default: 50 pixel)'
+    )
 
     args = parser.parse_args()
 
@@ -235,24 +247,20 @@ def main():
     print("\nAnalisi contorni...")
     closed_mask, open_mask, stats = analyze_fiber_contours(
         original,
-        min_contour_area=args.min_area
+        min_contour_area=args.min_area,
+        border_exclusion=args.exclude_border
     )
 
-    # Prova a chiudere i contorni aperti
-    print("\nTentativo chiusura contorni aperti...")
-    closed_attempts = close_open_contours(
-        original,
-        stats['open_contours'],
-        max_gap=args.max_gap
-    )
+    # Per ora saltiamo la chiusura - prima verifichiamo la classificazione
+    print("\nCreazione visualizzazioni (senza tentativo chiusura)...")
 
     # Salva risultati
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
     base_name = Path(args.input).stem
 
-    # Visualizza
-    visualize_analysis(original, closed_mask, open_mask, closed_attempts, stats, args.output, base_name)
+    # Visualizza SOLO la classificazione
+    visualize_classification(original, closed_mask, open_mask, stats, args.output, base_name)
 
     # Statistiche
     print("\n" + "=" * 60)
