@@ -168,11 +168,16 @@ def identify_closed_contours(skeleton, min_area=100):
         closed_count += 1
         closed_areas.append(area)
 
+    # Conta pixel riempiti
+    filled_pixels = np.sum(filled_mask > 0)
+    total_pixels = filled_mask.size
+
     print(f"\nRisultati:")
     print(f"  Cicli chiusi interni: {closed_count}")
     print(f"  Esclusi (hanno figli): {skipped_parent}")
     print(f"  Esclusi (toccano bordi): {skipped_border}")
     print(f"  Esclusi (troppo piccoli): {skipped_small}")
+    print(f"  Pixel riempiti: {filled_pixels:,} ({filled_pixels/total_pixels*100:.2f}% dell'immagine)")
 
     stats = {
         'total_contours': len(contours),
@@ -383,10 +388,29 @@ Area max: {stats['max_closed_area']:.0f} px
     cv2.imwrite(str(cycle_lines_path), cycle_lines_mask)
     print(f"Linee cicli chiusi salvate in: {cycle_lines_path}")
 
-    # Salva aree riempite
+    # Salva aree riempite (bianco e nero)
     filled_path = output_dir / f"{base_name}_closed_filled.png"
     cv2.imwrite(str(filled_path), filled_mask)
-    print(f"Aree chiuse riempite salvate in: {filled_path}")
+    print(f"Aree chiuse riempite (B/N) salvate in: {filled_path}")
+
+    # Crea e salva immagine GRANDE con cicli in VERDE su sfondo NERO
+    print("\nCreazione immagine cicli verdi...")
+    cycles_green_image = np.zeros((*original.shape, 3), dtype=np.uint8)
+    cycles_green_image[filled_mask > 0] = [0, 255, 0]  # VERDE per cicli chiusi
+
+    # Salva come PNG
+    cycles_green_path = output_dir / f"{base_name}_CICLI_VERDI.png"
+    cv2.imwrite(str(cycles_green_path), cv2.cvtColor(cycles_green_image, cv2.COLOR_RGB2BGR))
+    print(f"\n*** IMMAGINE CICLI VERDI salvata in: {cycles_green_path} ***")
+    print(f"    Apri questo file per vedere i {stats['closed']} cicli riempiti di verde!")
+
+    # Salva anche versione con overlay su originale
+    overlay_large = cv2.cvtColor(original, cv2.COLOR_GRAY2RGB)
+    overlay_large[filled_mask > 0] = [0, 255, 0]
+    overlay_path = output_dir / f"{base_name}_OVERLAY_CICLI.png"
+    cv2.imwrite(str(overlay_path), cv2.cvtColor(overlay_large, cv2.COLOR_RGB2BGR))
+    print(f"    OVERLAY cicli su originale salvato in: {overlay_path}")
+
 
 
 def visualize_classification(original, closed_mask, open_mask, stats, output_dir, base_name):
