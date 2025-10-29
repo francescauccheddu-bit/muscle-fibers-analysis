@@ -544,6 +544,16 @@ Area max: {stats['max_closed_area']:.0f} px
         overlay_path = output_dir / f"{base_name}_OVERLAY_PUNTINI.png"
         cv2.imwrite(str(overlay_path), overlay_large)
         print(f"    OVERLAY puntini su originale salvato in: {overlay_path}")
+
+        # Salva anche versione con pallini SULLO SKELETON (skeleton bianco + pallini rossi)
+        skeleton_rgb = cv2.cvtColor(skeleton, cv2.COLOR_GRAY2RGB)
+        for centroid in centroids:
+            cy, cx = int(centroid[0]), int(centroid[1])
+            cv2.circle(skeleton_rgb, (cx, cy), dot_radius, (0, 0, 255), -1)  # BGR: rosso
+        skeleton_dots_path = output_dir / f"{base_name}_SKELETON_PUNTINI.png"
+        cv2.imwrite(str(skeleton_dots_path), skeleton_rgb)
+        print(f"    SKELETON con puntini rossi salvato in: {skeleton_dots_path}")
+        print(f"    *** CONTROLLA QUESTO FILE per vedere se i pallini sono sui cicli giusti! ***")
     else:
         print("\nCreazione immagine cicli verdi...")
         cycles_image = np.zeros((*original.shape, 3), dtype=np.uint8)
