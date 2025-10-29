@@ -230,11 +230,14 @@ def identify_closed_contours(skeleton, min_area=100, max_area=None, exclude_larg
         candidate_regions.append((region, region_mask))
 
     # Se richiesto, identifica ed escludi il ciclo più grande
+    # MA SOLO se ci sono almeno 2 cicli (se c'è solo 1 ciclo, è valido!)
     largest_region_label = None
-    if exclude_largest and len(candidate_regions) > 0:
+    if exclude_largest and len(candidate_regions) >= 2:
         largest_region = max(candidate_regions, key=lambda x: x[0].area)
         largest_region_label = largest_region[0].label
         print(f"  Ciclo PIÙ GRANDE identificato: area={largest_region[0].area:.0f} px (VERRÀ ESCLUSO)")
+    elif exclude_largest and len(candidate_regions) == 1:
+        print(f"  Solo 1 ciclo trovato - NON viene escluso (è l'unico ciclo valido!)")
 
     # SECONDO PASSAGGIO: Processa tutte le regioni tranne la più grande
     for region, region_mask in candidate_regions:
