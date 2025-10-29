@@ -105,14 +105,15 @@ def clean_and_skeletonize(binary_mask, min_area=500, border_exclusion=0, min_ske
     return skeleton_uint8, cleaned_uint8
 
 
-def identify_closed_contours(skeleton, min_area=100, max_area=None, exclude_largest=True, debug_single_cycle=None):
+def identify_closed_contours_from_mask(cleaned_mask, skeleton, min_area=100, max_area=None, exclude_largest=True, debug_single_cycle=None):
     """
-    Identifica i percorsi chiusi (cicli) nello scheletro.
+    Identifica i percorsi chiusi (cicli) dalla MASCHERA PULITA, non dallo skeleton.
 
-    NUOVO APPROCCIO: Inverti lo skeleton e trova contorni (le aree bianche diventano cicli)
+    APPROCCIO DEFINITIVO: Usa la maschera pulita che ha contorni spessi e chiusi
 
     Args:
-        skeleton: Scheletro binario (linee 1 pixel)
+        cleaned_mask: Maschera pulita (prima dello skeletonization)
+        skeleton: Scheletro binario (usato solo per visualizzazione)
         min_area: Area minima per considerare una regione chiusa
         max_area: Area massima per considerare una regione chiusa (None = nessun limite)
         exclude_largest: Se True, esclude automaticamente il ciclo più grande (sfondo) (default: True)
@@ -126,19 +127,14 @@ def identify_closed_contours(skeleton, min_area=100, max_area=None, exclude_larg
     """
     if debug_single_cycle is not None:
         print(f"*** MODALITA DEBUG: Colorerò SOLO il ciclo #{debug_single_cycle} ***")
-    print("Identificazione cicli chiusi nello scheletro...")
+    print("Identificazione cicli chiusi dalla maschera pulita...")
 
-    # NUOVO APPROCCIO:
-    # 1. DILATA lo skeleton per chiudere piccoli gap (linee 1-pixel hanno spesso gap)
-    # 2. INVERTI lo skeleton dilatato: linee diventano nere, sfondo diventa bianco
-    # 3. I cicli (aree circondate da linee) diventano "isole bianche"
-    # 4. cv2.findContours trova facilmente queste isole!
+    # APPROCCIO DEFINITIVO:
+    # Usa la maschera PULITA (non lo skeleton) perché ha contorni spessi e CHIUSI
+    # Lo skeleton di 1 pixel ha troppi gap che rendono i cicli "aperti"
 
-    # APPROCCIO PIÙ SEMPLICE: Usa gerarchia di contorni per trovare "buchi"
-    # I cicli sono "buchi" (aree bianche) circondati da linee nere nell'immagine invertita
-
-    print("Inversione skeleton...")
-    inverted = cv2.bitwise_not(skeleton)
+    print("Inversione maschera pulita...")
+    inverted = cv2.bitwise_not(cleaned_mask)
 
     print("Ricerca contorni con gerarchia...")
     # RETR_CCOMP trova 2 livelli: contorni esterni e buchi
@@ -161,7 +157,7 @@ def identify_closed_contours(skeleton, min_area=100, max_area=None, exclude_larg
     else:
         print("Nessuna gerarchia trovata!")
 
-    print(f"Trovati {len(contours)} contorni totali")
+    print(f"Cicli candidati totali: {len(contours)}")
 
     # Analizza ogni contorno per trovare i cicli validi
     h, w = skeleton.shape
@@ -734,8 +730,9 @@ def main():
 
     # Identifica percorsi chiusi
     print("\nIdentificazione percorsi chiusi...")
-    filled_mask, cycle_lines_mask, centroids, stats = identify_closed_contours(
-        skeleton,
+    filled_mask, cycle_lines_mask, centroids, stats = identify_closed_contours_from_mask(
+        cleaned,  # Usa la maschera pulita, non lo skeleton!
+        skeleton,  # Passa skeleton per visualizzazione
         min_area=args.min_cycle_area,
         max_area=args.max_cycle_area,
         exclude_largest=not args.no_exclude_largest,  # Escludi il più grande per default
