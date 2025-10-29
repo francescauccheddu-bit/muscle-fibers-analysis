@@ -105,7 +105,7 @@ def clean_and_skeletonize(binary_mask, min_area=500, border_exclusion=0, min_ske
     return skeleton_uint8, cleaned_uint8
 
 
-def identify_closed_contours(skeleton, min_area=100, max_area=None, debug_single_cycle=None):
+def identify_closed_contours(skeleton, min_area=100, max_area=None, exclude_largest=True, debug_single_cycle=None):
     """
     Identifica i percorsi chiusi (cicli) nello scheletro.
 
@@ -115,6 +115,7 @@ def identify_closed_contours(skeleton, min_area=100, max_area=None, debug_single
         skeleton: Scheletro binario (linee 1 pixel)
         min_area: Area minima per considerare una regione chiusa
         max_area: Area massima per considerare una regione chiusa (None = nessun limite)
+        exclude_largest: Se True, esclude automaticamente il ciclo più grande (sfondo) (default: True)
         debug_single_cycle: Se specificato, colora solo questo ciclo (1-based)
 
     Returns:
@@ -192,16 +193,17 @@ def identify_closed_contours(skeleton, min_area=100, max_area=None, debug_single
     skipped_border = 0
     skipped_small = 0
     skipped_large = 0
+    skipped_largest = 0
 
     h, w = skeleton.shape
 
-    # Analizza ogni regione interna
-    for region in measure.regionprops(labeled):
-        label = region.label
-        area = region.area
+    # PRIMO PASSAGGIO: Raccogli tutte le regioni candidate e trova la più grande
+    regions_list = measure.regionprops(labeled)
+    candidate_regions = []
 
+    for region in regions_list:
         # Ottieni la maschera di questa regione
-        region_mask = (labeled == label).astype(np.uint8) * 255
+        region_mask = (labeled == region.label).astype(np.uint8) * 255
 
         # Controlla se tocca il bordo
         touches_border = (
@@ -214,25 +216,43 @@ def identify_closed_contours(skeleton, min_area=100, max_area=None, debug_single
             continue
 
         # Controlla area minima
-        if area < min_area:
+        if region.area < min_area:
             skipped_small += 1
             continue
 
-        # Controlla area massima (esclude regioni troppo grandi come lo sfondo)
-        if max_area is not None and area > max_area:
+        # Controlla area massima (se specificata)
+        if max_area is not None and region.area > max_area:
             skipped_large += 1
-            print(f"  Ciclo troppo grande ESCLUSO: area={area:.0f} px (max={max_area}), bbox={region.bbox}")
+            print(f"  Ciclo troppo grande ESCLUSO: area={region.area:.0f} px (max={max_area}), bbox={region.bbox}")
+            continue
+
+        # Questa è una regione candidata
+        candidate_regions.append((region, region_mask))
+
+    # Se richiesto, identifica ed escludi il ciclo più grande
+    largest_region_label = None
+    if exclude_largest and len(candidate_regions) > 0:
+        largest_region = max(candidate_regions, key=lambda x: x[0].area)
+        largest_region_label = largest_region[0].label
+        print(f"  Ciclo PIÙ GRANDE identificato: area={largest_region[0].area:.0f} px (VERRÀ ESCLUSO)")
+
+    # SECONDO PASSAGGIO: Processa tutte le regioni tranne la più grande
+    for region, region_mask in candidate_regions:
+        # Escludi il ciclo più grande se richiesto
+        if exclude_largest and region.label == largest_region_label:
+            skipped_largest += 1
+            print(f"  Ciclo più grande ESCLUSO: area={region.area:.0f} px, bbox={region.bbox}")
             continue
 
         # Questa è un'area interna a un ciclo chiuso!
         closed_count += 1
         centroid = region.centroid  # (row, col) = (y, x)
-        print(f"  Ciclo chiuso {closed_count}: area={area:.0f} px, centroid=({centroid[0]:.1f}, {centroid[1]:.1f})")
+        print(f"  Ciclo chiuso {closed_count}: area={region.area:.0f} px, centroid=({centroid[0]:.1f}, {centroid[1]:.1f})")
 
         # Se siamo in modalità debug, colora solo il ciclo specificato
         if debug_single_cycle is not None:
             if closed_count != debug_single_cycle:
-                closed_areas.append(area)
+                closed_areas.append(region.area)
                 centroids.append(centroid)
                 continue  # Salta questo ciclo
             else:
@@ -246,7 +266,7 @@ def identify_closed_contours(skeleton, min_area=100, max_area=None, debug_single
         cycle_skeleton = cv2.bitwise_and(skeleton, dilated)
         cycle_lines_mask = cv2.bitwise_or(cycle_lines_mask, cycle_skeleton)
 
-        closed_areas.append(area)
+        closed_areas.append(region.area)
         centroids.append(centroid)
 
     # Conta pixel riempiti
@@ -257,7 +277,9 @@ def identify_closed_contours(skeleton, min_area=100, max_area=None, debug_single
     print(f"  Cicli chiusi interni: {closed_count}")
     print(f"  Esclusi (toccano bordi): {skipped_border}")
     print(f"  Esclusi (troppo piccoli): {skipped_small}")
-    print(f"  Esclusi (troppo grandi): {skipped_large}")
+    print(f"  Esclusi (troppo grandi per max_area): {skipped_large}")
+    if exclude_largest:
+        print(f"  Esclusi (ciclo più grande): {skipped_largest}")
     print(f"  Pixel riempiti: {filled_pixels:,} ({filled_pixels/total_pixels*100:.2f}% dell'immagine)")
 
     stats = {
@@ -639,8 +661,13 @@ def main():
     parser.add_argument(
         '--max-cycle-area',
         type=int,
-        default=100000,
-        help='Area massima per considerare un ciclo chiuso (default: 100000 pixel). Esclude regioni troppo grandi come lo sfondo.'
+        default=None,
+        help='Area massima per considerare un ciclo chiuso (default: None=disabilitato). Esclude regioni troppo grandi.'
+    )
+    parser.add_argument(
+        '--no-exclude-largest',
+        action='store_true',
+        help='NON escludere automaticamente il ciclo più grande (default: False, ovvero esclude sempre il più grande)'
     )
     parser.add_argument(
         '--close-gaps',
@@ -705,6 +732,7 @@ def main():
         skeleton,
         min_area=args.min_cycle_area,
         max_area=args.max_cycle_area,
+        exclude_largest=not args.no_exclude_largest,  # Escludi il più grande per default
         debug_single_cycle=args.debug_single_cycle
     )
 
