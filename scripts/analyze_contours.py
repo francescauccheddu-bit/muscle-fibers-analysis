@@ -482,8 +482,8 @@ def main():
     parser.add_argument(
         '--min-cycle-area',
         type=int,
-        default=50,
-        help='Area minima per considerare un ciclo chiuso (default: 50 pixel)'
+        default=1000,
+        help='Area minima per considerare un ciclo chiuso (default: 1000 pixel)'
     )
 
     args = parser.parse_args()
