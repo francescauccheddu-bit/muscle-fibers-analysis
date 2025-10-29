@@ -129,35 +129,15 @@ def identify_closed_contours_from_mask(cleaned_mask, skeleton, min_area=100, max
         print(f"*** MODALITA DEBUG: Colorerò SOLO il ciclo #{debug_single_cycle} ***")
     print("Identificazione cicli chiusi dalla maschera pulita...")
 
-    # APPROCCIO DEFINITIVO:
-    # Usa la maschera PULITA (non lo skeleton) perché ha contorni spessi e CHIUSI
-    # Lo skeleton di 1 pixel ha troppi gap che rendono i cicli "aperti"
+    # APPROCCIO SEMPLICISSIMO:
+    # La maschera pulita contiene REGIONI BIANCHE PIENE (i cicli)
+    # Basta trovare tutti i contorni esterni!
 
-    print("Inversione maschera pulita...")
-    inverted = cv2.bitwise_not(cleaned_mask)
+    print("Ricerca contorni nella maschera pulita...")
+    # RETR_EXTERNAL trova solo contorni esterni (le regioni bianche)
+    contours, hierarchy = cv2.findContours(cleaned_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    print("Ricerca contorni con gerarchia...")
-    # RETR_CCOMP trova 2 livelli: contorni esterni e buchi
-    contours, hierarchy = cv2.findContours(inverted, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
-
-    print(f"Trovati {len(contours)} contorni totali")
-
-    # La gerarchia è [Next, Previous, First_Child, Parent]
-    # I "buchi" (cicli interni) hanno Parent >= 0
-    if hierarchy is not None:
-        hierarchy = hierarchy[0]  # Estrai il primo elemento
-        hole_contours = []
-        for idx, (contour, h) in enumerate(zip(contours, hierarchy)):
-            # h[3] è il Parent: se >= 0, questo è un "buco" (ciclo interno)
-            if h[3] >= 0:
-                hole_contours.append(contour)
-
-        print(f"Trovati {len(hole_contours)} buchi (cicli candidati)")
-        contours = hole_contours  # Usa solo i buchi
-    else:
-        print("Nessuna gerarchia trovata!")
-
-    print(f"Cicli candidati totali: {len(contours)}")
+    print(f"Trovati {len(contours)} regioni bianche (cicli candidati)")
 
     # Analizza ogni contorno per trovare i cicli validi
     h, w = skeleton.shape
