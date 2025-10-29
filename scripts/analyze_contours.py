@@ -418,11 +418,12 @@ def close_open_contours(binary_mask, open_contours, max_gap=10):
     return result
 
 
-def visualize_skeleton(original, cleaned, skeleton, filled_mask, centroids, closed_areas, new_skeleton_lines, stats, output_dir, base_name, visualize_mode='fill', dot_radius=10):
+def visualize_skeleton(original, cleaned, skeleton, filled_mask, centroids, closed_areas, new_skeleton_lines, stats, output_dir, base_name, closing_size=3, visualize_mode='fill', dot_radius=10):
     """Visualizza il risultato della scheletonizzazione e identificazione percorsi chiusi.
 
     Args:
         new_skeleton_lines: Linee skeleton aggiunte dal morphological closing (None se disabilitato)
+        closing_size: Dimensione kernel del morphological closing (usato nel nome file)
         visualize_mode: 'fill' (riempi cicli in verde) o 'dot' (puntino rosso al centro)
         dot_radius: Raggio del puntino rosso in pixel (default: 10)
     """
@@ -436,22 +437,28 @@ def visualize_skeleton(original, cleaned, skeleton, filled_mask, centroids, clos
 
         print(f"  Disegno {len(centroids)} puntini rossi...")
 
+        # Suffisso per nome file con closing_size
+        closing_suffix = f"_closing{closing_size}" if closing_size > 0 else ""
+
+        # Conta le linee verdi una sola volta
+        n_green_lines = 0
+        if new_skeleton_lines is not None:
+            n_green_lines = np.sum(new_skeleton_lines > 0)
+
         # 1. SKELETON con linee verdi (nuove dal closing) e puntini rossi
         skeleton_rgb = cv2.cvtColor(skeleton, cv2.COLOR_GRAY2RGB)
 
         # Se ci sono nuove linee skeleton dal closing, aggiungi in VERDE
-        if new_skeleton_lines is not None:
-            n_green_lines = np.sum(new_skeleton_lines > 0)
-            if n_green_lines > 0:
-                print(f"  Aggiunta visualizzazione {n_green_lines} pixel di linee verdi (skeleton dopo closing)...")
-                skeleton_rgb[new_skeleton_lines > 0] = [0, 255, 0]  # BGR: verde per linee nuove
+        if n_green_lines > 0:
+            print(f"  Aggiunta visualizzazione {n_green_lines} pixel di linee verdi (skeleton dopo closing)...")
+            skeleton_rgb[new_skeleton_lines > 0] = [0, 255, 0]  # BGR: verde per linee nuove
 
         # Aggiungi pallini rossi DOPO il verde (così sono visibili sopra)
         for centroid in centroids:
             cy, cx = int(centroid[0]), int(centroid[1])
             cv2.circle(skeleton_rgb, (cx, cy), dot_radius, (0, 0, 255), -1)  # BGR: rosso
 
-        skeleton_dots_path = output_dir / f"{base_name}_SKELETON_PUNTINI.png"
+        skeleton_dots_path = output_dir / f"{base_name}_SKELETON_PUNTINI{closing_suffix}.png"
         cv2.imwrite(str(skeleton_dots_path), skeleton_rgb)
         print(f"  Salvato: {skeleton_dots_path}")
 
@@ -459,22 +466,42 @@ def visualize_skeleton(original, cleaned, skeleton, filled_mask, centroids, clos
         original_rgb = cv2.cvtColor(original, cv2.COLOR_GRAY2RGB)
 
         # Se ci sono nuove linee skeleton dal closing, aggiungi in VERDE
-        if new_skeleton_lines is not None:
-            n_green_lines = np.sum(new_skeleton_lines > 0)
-            if n_green_lines > 0:
-                print(f"  Aggiunta visualizzazione {n_green_lines} pixel di linee verdi sulla maschera originale...")
-                original_rgb[new_skeleton_lines > 0] = [0, 255, 0]  # BGR: verde per linee nuove
+        if n_green_lines > 0:
+            print(f"  Aggiunta visualizzazione {n_green_lines} pixel di linee verdi sulla maschera originale...")
+            original_rgb[new_skeleton_lines > 0] = [0, 255, 0]  # BGR: verde per linee nuove
 
         # Aggiungi pallini rossi DOPO il verde (così sono visibili sopra)
         for centroid in centroids:
             cy, cx = int(centroid[0]), int(centroid[1])
             cv2.circle(original_rgb, (cx, cy), dot_radius, (0, 0, 255), -1)  # BGR: rosso
 
-        overlay_path = output_dir / f"{base_name}_OVERLAY_PUNTINI.png"
+        overlay_path = output_dir / f"{base_name}_OVERLAY_PUNTINI{closing_suffix}.png"
         cv2.imwrite(str(overlay_path), original_rgb)
         print(f"  Salvato: {overlay_path}")
 
-        # 3. ISTOGRAMMA distribuzione aree
+        # 3. SKELETON RIMPOLPATO (thick) con linee verdi e puntini rossi
+        print(f"  Creazione skeleton rimpolpato...")
+        # Dilata lo skeleton per renderlo più spesso (simile alla maschera originale)
+        kernel_thick = np.ones((3, 3), np.uint8)
+        skeleton_thick = cv2.dilate(skeleton, kernel_thick, iterations=2)
+        skeleton_thick_rgb = cv2.cvtColor(skeleton_thick, cv2.COLOR_GRAY2RGB)
+
+        # Se ci sono nuove linee skeleton dal closing, dilata anche quelle e aggiungi in VERDE
+        if n_green_lines > 0:
+            print(f"  Aggiunta visualizzazione linee verdi rimpolpate...")
+            new_lines_thick = cv2.dilate(new_skeleton_lines, kernel_thick, iterations=2)
+            skeleton_thick_rgb[new_lines_thick > 0] = [0, 255, 0]  # BGR: verde per linee nuove
+
+        # Aggiungi pallini rossi DOPO il verde
+        for centroid in centroids:
+            cy, cx = int(centroid[0]), int(centroid[1])
+            cv2.circle(skeleton_thick_rgb, (cx, cy), dot_radius, (0, 0, 255), -1)  # BGR: rosso
+
+        skeleton_thick_path = output_dir / f"{base_name}_SKELETON_THICK{closing_suffix}.png"
+        cv2.imwrite(str(skeleton_thick_path), skeleton_thick_rgb)
+        print(f"  Salvato: {skeleton_thick_path}")
+
+        # 4. ISTOGRAMMA distribuzione aree
         if len(closed_areas) > 0:
             print(f"  Creazione istogramma distribuzione aree...")
             fig, ax = plt.subplots(figsize=(12, 6))
@@ -484,7 +511,12 @@ def visualize_skeleton(original, cleaned, skeleton, filled_mask, centroids, clos
 
             ax.set_xlabel('Area (pixel)', fontsize=12)
             ax.set_ylabel('Frequenza (numero di cicli)', fontsize=12)
-            ax.set_title(f'Distribuzione Aree dei Cicli (n={len(closed_areas)})', fontsize=14, fontweight='bold')
+
+            # Titolo con info sul closing
+            title = f'Distribuzione Aree dei Cicli (n={len(closed_areas)})'
+            if closing_size > 0:
+                title += f' - Closing size: {closing_size}'
+            ax.set_title(title, fontsize=14, fontweight='bold')
             ax.grid(True, alpha=0.3)
 
             # Aggiungi statistiche
@@ -496,7 +528,7 @@ def visualize_skeleton(original, cleaned, skeleton, filled_mask, centroids, clos
                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
 
             plt.tight_layout()
-            histogram_path = output_dir / f"{base_name}_ISTOGRAMMA_AREE.png"
+            histogram_path = output_dir / f"{base_name}_ISTOGRAMMA_AREE{closing_suffix}.png"
             plt.savefig(histogram_path, dpi=150, bbox_inches='tight')
             print(f"  Salvato: {histogram_path}")
             plt.close()
@@ -702,6 +734,7 @@ def main():
     visualize_skeleton(
         original, cleaned, skeleton, filled_mask, centroids, closed_areas, new_skeleton_lines, stats,
         args.output, base_name,
+        closing_size=args.closing_size,
         visualize_mode=args.visualize_mode,
         dot_radius=args.dot_radius
     )
