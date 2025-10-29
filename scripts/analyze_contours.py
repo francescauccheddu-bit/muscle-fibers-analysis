@@ -553,14 +553,14 @@ def main():
     parser.add_argument(
         '--close-gaps',
         type=int,
-        default=3,
-        help='Dimensione kernel per chiusura morfologica (default: 3 pixel). Connette gap nei contorni. 0=disabilitato.'
+        default=0,
+        help='Dimensione kernel per chiusura morfologica (default: 0=disabilitato). Connette gap nei contorni se necessario.'
     )
     parser.add_argument(
         '--min-skeleton-size',
         type=int,
-        default=0,
-        help='Dimensione minima componenti scheletro da mantenere (default: 0=disabilitato). Rimuove frammenti isolati.'
+        default=50,
+        help='Dimensione minima componenti scheletro da mantenere (default: 50 pixel). Rimuove frammenti isolati sconnessi.'
     )
     parser.add_argument(
         '--debug-single-cycle',
