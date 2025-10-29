@@ -13,6 +13,7 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 from skimage import morphology, measure
+from scipy import ndimage as ndi
 
 
 def analyze_fiber_contours(binary_mask, min_contour_area=100):
@@ -112,7 +113,7 @@ def close_open_contours(binary_mask, open_contours, max_gap=10):
         eroded = cv2.erode(dilated, kernel, iterations=1)
 
         # Riempi l'area interna
-        closed_filled = morphology.binary_fill_holes(eroded > 0).astype(np.uint8) * 255
+        closed_filled = ndi.binary_fill_holes(eroded > 0).astype(np.uint8) * 255
 
         # Aggiungi al risultato
         result = cv2.bitwise_or(result, closed_filled)
