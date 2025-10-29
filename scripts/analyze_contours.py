@@ -66,7 +66,7 @@ def clean_and_skeletonize(binary_mask, min_area=500, border_exclusion=0):
     return skeleton_uint8, cleaned_uint8
 
 
-def identify_closed_contours(skeleton, min_area=100):
+def identify_closed_contours(skeleton, min_area=100, debug_single_cycle=None):
     """
     Identifica i percorsi chiusi (cicli) nello scheletro.
 
@@ -75,12 +75,15 @@ def identify_closed_contours(skeleton, min_area=100):
     Args:
         skeleton: Scheletro binario (linee 1 pixel)
         min_area: Area minima per considerare una regione chiusa
+        debug_single_cycle: Se specificato, colora solo questo ciclo (1-based)
 
     Returns:
         filled_mask: Maschera con cicli chiusi riempiti
         cycle_lines_mask: Linee dello scheletro che formano cicli
         stats: Statistiche sui percorsi
     """
+    if debug_single_cycle is not None:
+        print(f"*** MODALITA DEBUG: Colorerò SOLO il ciclo #{debug_single_cycle} ***")
     print("Identificazione cicli chiusi nello scheletro...")
 
     # Approccio: riempi tutti i buchi, poi sottrai lo scheletro originale
@@ -134,7 +137,16 @@ def identify_closed_contours(skeleton, min_area=100):
             continue
 
         # Questa è un'area interna a un ciclo chiuso!
-        print(f"  Ciclo chiuso {closed_count + 1}: area={area:.0f} px")
+        closed_count += 1
+        print(f"  Ciclo chiuso {closed_count}: area={area:.0f} px, bbox={region.bbox}")
+
+        # Se siamo in modalità debug, colora solo il ciclo specificato
+        if debug_single_cycle is not None:
+            if closed_count != debug_single_cycle:
+                closed_areas.append(area)
+                continue  # Salta questo ciclo
+            else:
+                print(f"  >>> QUESTO È IL CICLO DA COLORARE! <<<")
 
         # Aggiungi alla maschera riempita
         filled_mask[region_mask > 0] = 255
@@ -144,7 +156,6 @@ def identify_closed_contours(skeleton, min_area=100):
         cycle_skeleton = cv2.bitwise_and(skeleton, dilated)
         cycle_lines_mask = cv2.bitwise_or(cycle_lines_mask, cycle_skeleton)
 
-        closed_count += 1
         closed_areas.append(area)
 
     # Conta pixel riempiti
@@ -485,6 +496,12 @@ def main():
         default=1000,
         help='Area minima per considerare un ciclo chiuso (default: 1000 pixel)'
     )
+    parser.add_argument(
+        '--debug-single-cycle',
+        type=int,
+        default=None,
+        help='DEBUG: Colora solo il ciclo numero N (1-based). Utile per verificare un singolo ciclo.'
+    )
 
     args = parser.parse_args()
 
@@ -513,7 +530,8 @@ def main():
     print("\nIdentificazione percorsi chiusi...")
     filled_mask, cycle_lines_mask, stats = identify_closed_contours(
         skeleton,
-        min_area=args.min_cycle_area
+        min_area=args.min_cycle_area,
+        debug_single_cycle=args.debug_single_cycle
     )
 
     # Salva risultati
@@ -528,8 +546,11 @@ def main():
     print("\n" + "=" * 60)
     print("COMPLETATO")
     print("=" * 60)
-    print(f"Percorsi CHIUSI: {stats['closed']}")
-    print(f"Percorsi APERTI: {stats['open']}")
+    if args.debug_single_cycle is not None:
+        print(f"MODALITÀ DEBUG: Colorato SOLO ciclo #{args.debug_single_cycle}")
+    else:
+        print(f"Percorsi CHIUSI: {stats['closed']}")
+        print(f"Percorsi APERTI: {stats['open']}")
     print("=" * 60)
 
     print("\nANALISI COMPLETATA!")
