@@ -20,7 +20,7 @@ from skimage.morphology import skeletonize, remove_small_objects
 from scipy import ndimage as ndi
 
 
-def clean_and_skeletonize(binary_mask, min_area=500, border_exclusion=0, min_skeleton_size=50):
+def clean_and_skeletonize(binary_mask, min_area=500, border_exclusion=0, min_skeleton_size=50, close_gaps=3):
     """
     Pulisce la maschera dal rumore e crea lo scheletro dei contorni.
 
@@ -29,6 +29,7 @@ def clean_and_skeletonize(binary_mask, min_area=500, border_exclusion=0, min_ske
         min_area: Area minima per mantenere un oggetto
         border_exclusion: Larghezza del bordo da escludere
         min_skeleton_size: Dimensione minima (pixel) per componenti connesse dello scheletro
+        close_gaps: Dimensione kernel per chiusura morfologica (0=disabilitato). Chiude gap nei contorni.
 
     Returns:
         skeleton: Scheletro dei contorni (linee di 1 pixel)
@@ -41,6 +42,20 @@ def clean_and_skeletonize(binary_mask, min_area=500, border_exclusion=0, min_ske
 
     # Rimuovi piccoli oggetti (rumore)
     cleaned = remove_small_objects(mask_bool, min_size=min_area)
+
+    # Chiusura morfologica per connettere piccoli gap nei contorni
+    if close_gaps > 0:
+        print(f"Chiusura morfologica gap (kernel={close_gaps}) per connettere contorni...")
+        from scipy import ndimage
+        kernel = morphology.disk(close_gaps)
+        closed = ndimage.binary_closing(cleaned, structure=kernel)
+
+        # Conta oggetti prima e dopo
+        n_before = measure.label(cleaned).max()
+        n_after = measure.label(closed).max()
+        print(f"  Regioni prima: {n_before}, dopo chiusura: {n_after}")
+
+        cleaned = closed
 
     # Escludi bordi se richiesto
     if border_exclusion > 0:
@@ -60,15 +75,15 @@ def clean_and_skeletonize(binary_mask, min_area=500, border_exclusion=0, min_ske
     print("Creazione scheletro...")
     skeleton = skeletonize(cleaned)
 
+    # Conta componenti scheletro
+    skeleton_bool = skeleton > 0
+    skeleton_labeled = measure.label(skeleton_bool, connectivity=2)
+    n_skeleton_components = skeleton_labeled.max()
+    print(f"  Componenti scheletro: {n_skeleton_components}")
+
     # Rimuovi componenti connesse piccole dello scheletro (pixel isolati/frammenti)
     if min_skeleton_size > 0:
         print(f"Rimozione frammenti scheletro < {min_skeleton_size} pixel...")
-        skeleton_bool = skeleton > 0
-
-        # Etichetta componenti connesse dello scheletro
-        skeleton_labeled = measure.label(skeleton_bool, connectivity=2)
-        n_skeleton_components = skeleton_labeled.max()
-        print(f"  Componenti scheletro prima: {n_skeleton_components}")
 
         # Rimuovi componenti piccole
         skeleton_cleaned = remove_small_objects(skeleton_bool, min_size=min_skeleton_size)
@@ -77,9 +92,11 @@ def clean_and_skeletonize(binary_mask, min_area=500, border_exclusion=0, min_ske
         skeleton_labeled_after = measure.label(skeleton_cleaned, connectivity=2)
         n_after = skeleton_labeled_after.max()
         removed = n_skeleton_components - n_after
-        print(f"  Componenti scheletro dopo: {n_after} (rimosse: {removed})")
+        print(f"  Componenti scheletro dopo rimozione: {n_after} (rimosse: {removed})")
 
         skeleton = skeleton_cleaned
+    else:
+        print(f"  (Rimozione frammenti disabilitata)")
 
     # Converti in uint8 per visualizzazione
     cleaned_uint8 = (cleaned * 255).astype(np.uint8)
@@ -534,10 +551,16 @@ def main():
         help='Area massima per considerare un ciclo chiuso (default: 100000 pixel). Esclude regioni troppo grandi come lo sfondo.'
     )
     parser.add_argument(
+        '--close-gaps',
+        type=int,
+        default=3,
+        help='Dimensione kernel per chiusura morfologica (default: 3 pixel). Connette gap nei contorni. 0=disabilitato.'
+    )
+    parser.add_argument(
         '--min-skeleton-size',
         type=int,
-        default=50,
-        help='Dimensione minima componenti scheletro da mantenere (default: 50 pixel). Rimuove frammenti isolati.'
+        default=0,
+        help='Dimensione minima componenti scheletro da mantenere (default: 0=disabilitato). Rimuove frammenti isolati.'
     )
     parser.add_argument(
         '--debug-single-cycle',
@@ -567,7 +590,8 @@ def main():
         original,
         min_area=args.min_area,
         border_exclusion=args.exclude_border,
-        min_skeleton_size=args.min_skeleton_size
+        min_skeleton_size=args.min_skeleton_size,
+        close_gaps=args.close_gaps
     )
 
     # Identifica percorsi chiusi
