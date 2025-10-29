@@ -3,7 +3,7 @@
 """
 Script per analizzare contorni di fibre muscolari in sezione.
 
-Identifica contorni chiusi vs aperti e propone metodi di chiusura.
+Pulisce il rumore e crea lo scheletro (linee di 1 pixel) dei contorni.
 """
 
 import argparse
@@ -13,7 +13,54 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 from skimage import morphology, measure
+from skimage.morphology import skeletonize, remove_small_objects
 from scipy import ndimage as ndi
+
+
+def clean_and_skeletonize(binary_mask, min_area=500, border_exclusion=0):
+    """
+    Pulisce la maschera dal rumore e crea lo scheletro dei contorni.
+
+    Args:
+        binary_mask: Maschera binaria con contorni
+        min_area: Area minima per mantenere un oggetto
+        border_exclusion: Larghezza del bordo da escludere
+
+    Returns:
+        skeleton: Scheletro dei contorni (linee di 1 pixel)
+        cleaned: Maschera pulita prima della scheletonizzazione
+    """
+    print("Pulizia maschera...")
+
+    # Converti in booleano
+    mask_bool = binary_mask > 0
+
+    # Rimuovi piccoli oggetti (rumore)
+    cleaned = remove_small_objects(mask_bool, min_size=min_area)
+
+    # Escludi bordi se richiesto
+    if border_exclusion > 0:
+        print(f"Esclusione bordo di {border_exclusion} pixel...")
+        h, w = cleaned.shape
+        cleaned[:border_exclusion, :] = False
+        cleaned[-border_exclusion:, :] = False
+        cleaned[:, :border_exclusion] = False
+        cleaned[:, -border_exclusion:] = False
+
+    # Conta oggetti rimasti
+    labeled = measure.label(cleaned)
+    n_objects = labeled.max()
+    print(f"Oggetti dopo pulizia: {n_objects}")
+
+    # Scheletonizza
+    print("Creazione scheletro...")
+    skeleton = skeletonize(cleaned)
+
+    # Converti in uint8 per visualizzazione
+    cleaned_uint8 = (cleaned * 255).astype(np.uint8)
+    skeleton_uint8 = (skeleton * 255).astype(np.uint8)
+
+    return skeleton_uint8, cleaned_uint8
 
 
 def analyze_fiber_contours(binary_mask, min_contour_area=100, border_exclusion=0):
@@ -133,6 +180,62 @@ def close_open_contours(binary_mask, open_contours, max_gap=10):
     return result
 
 
+def visualize_skeleton(original, cleaned, skeleton, output_dir, base_name):
+    """Visualizza il risultato della scheletonizzazione."""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    print("Creazione visualizzazioni...")
+
+    # Crea visualizzazione a colori dello scheletro
+    skeleton_colored = np.zeros((*original.shape, 3), dtype=np.uint8)
+    skeleton_colored[skeleton > 0] = [0, 255, 0]  # Verde per lo scheletro
+
+    # Overlay dello scheletro sull'originale
+    overlay = cv2.cvtColor(original, cv2.COLOR_GRAY2RGB)
+    overlay[skeleton > 0] = [0, 255, 0]
+
+    # Visualizzazione principale - 2x2 layout
+    fig, axes = plt.subplots(2, 2, figsize=(16, 16))
+
+    # Originale
+    axes[0, 0].imshow(original, cmap='gray')
+    axes[0, 0].set_title('Maschera Originale', fontsize=14, fontweight='bold')
+    axes[0, 0].axis('off')
+
+    # Dopo pulizia
+    axes[0, 1].imshow(cleaned, cmap='gray')
+    axes[0, 1].set_title('Dopo Pulizia Rumore', fontsize=14, fontweight='bold')
+    axes[0, 1].axis('off')
+
+    # Scheletro
+    axes[1, 0].imshow(skeleton, cmap='gray')
+    axes[1, 0].set_title('Scheletro (linee 1 pixel)', fontsize=14, fontweight='bold')
+    axes[1, 0].axis('off')
+
+    # Overlay
+    axes[1, 1].imshow(overlay)
+    axes[1, 1].set_title('Overlay Scheletro su Originale', fontsize=14, fontweight='bold')
+    axes[1, 1].axis('off')
+
+    plt.tight_layout()
+
+    # Salva
+    vis_path = output_dir / f"{base_name}_skeleton_analysis.png"
+    plt.savefig(vis_path, dpi=300, bbox_inches='tight')
+    print(f"Visualizzazione salvata in: {vis_path}")
+    plt.close()
+
+    # Salva maschere separate
+    skeleton_path = output_dir / f"{base_name}_skeleton.png"
+    cv2.imwrite(str(skeleton_path), skeleton)
+    print(f"Scheletro salvato in: {skeleton_path}")
+
+    cleaned_path = output_dir / f"{base_name}_cleaned.png"
+    cv2.imwrite(str(cleaned_path), cleaned)
+    print(f"Maschera pulita salvata in: {cleaned_path}")
+
+
 def visualize_classification(original, closed_mask, open_mask, stats, output_dir, base_name):
     """Visualizza la classificazione dei contorni (chiusi vs aperti)."""
     output_dir = Path(output_dir)
@@ -212,14 +315,8 @@ def main():
     parser.add_argument(
         '--min-area',
         type=int,
-        default=100,
-        help='Area minima per considerare un contorno (default: 100)'
-    )
-    parser.add_argument(
-        '--max-gap',
-        type=int,
-        default=10,
-        help='Distanza massima gap da chiudere (default: 10 pixel)'
+        default=500,
+        help='Area minima per rimuovere rumore (default: 500 pixel)'
     )
     parser.add_argument(
         '--exclude-border',
@@ -231,7 +328,7 @@ def main():
     args = parser.parse_args()
 
     print("=" * 60)
-    print("ANALISI CONTORNI FIBRE MUSCOLARI")
+    print("SCHELETONIZZAZIONE CONTORNI FIBRE MUSCOLARI")
     print("=" * 60)
 
     # Carica
@@ -243,32 +340,25 @@ def main():
 
     print(f"Dimensioni: {original.shape}")
 
-    # Analizza contorni
-    print("\nAnalisi contorni...")
-    closed_mask, open_mask, stats = analyze_fiber_contours(
+    # Pulisci e scheletonizza
+    print("\nPulizia e scheletonizzazione...")
+    skeleton, cleaned = clean_and_skeletonize(
         original,
-        min_contour_area=args.min_area,
+        min_area=args.min_area,
         border_exclusion=args.exclude_border
     )
-
-    # Per ora saltiamo la chiusura - prima verifichiamo la classificazione
-    print("\nCreazione visualizzazioni (senza tentativo chiusura)...")
 
     # Salva risultati
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
     base_name = Path(args.input).stem
 
-    # Visualizza SOLO la classificazione
-    visualize_classification(original, closed_mask, open_mask, stats, args.output, base_name)
+    # Visualizza
+    print("\nCreazione visualizzazioni...")
+    visualize_skeleton(original, cleaned, skeleton, args.output, base_name)
 
-    # Statistiche
     print("\n" + "=" * 60)
-    print("STATISTICHE CONTORNI")
-    print("=" * 60)
-    print(f"Totale contorni trovati: {stats['total']}")
-    print(f"Contorni CHIUSI: {stats['closed']} ({stats['closed']/stats['total']*100:.1f}%)")
-    print(f"Contorni APERTI: {stats['open']} ({stats['open']/stats['total']*100:.1f}%)")
+    print("COMPLETATO - Scheletro dei contorni creato")
     print("=" * 60)
 
     print("\nANALISI COMPLETATA!")
