@@ -105,7 +105,7 @@ def clean_and_skeletonize(binary_mask, min_area=500, border_exclusion=0, min_ske
     return skeleton_uint8, cleaned_uint8
 
 
-def identify_closed_contours_from_mask(cleaned_mask, skeleton, min_area=100, max_area=None, exclude_largest=True, debug_single_cycle=None):
+def identify_closed_contours_from_mask(cleaned_mask, skeleton, min_area=100, max_area=None, exclude_largest=True, closing_size=3, debug_single_cycle=None):
     """
     Identifica i percorsi chiusi (cicli) dalla MASCHERA PULITA, non dallo skeleton.
 
@@ -117,6 +117,7 @@ def identify_closed_contours_from_mask(cleaned_mask, skeleton, min_area=100, max
         min_area: Area minima per considerare una regione chiusa
         max_area: Area massima per considerare una regione chiusa (None = nessun limite)
         exclude_largest: Se True, esclude automaticamente il ciclo più grande (sfondo) (default: True)
+        closing_size: Dimensione kernel per chiusura morfologica dei gap (default: 3, 0=disabilitato)
         debug_single_cycle: Se specificato, colora solo questo ciclo (1-based)
 
     Returns:
@@ -132,10 +133,18 @@ def identify_closed_contours_from_mask(cleaned_mask, skeleton, min_area=100, max
     # APPROCCIO CORRETTO:
     # La maschera pulita ha UN'UNICA regione bianca connessa (tutte le fibre collegate)
     # I cicli sono i BUCHI NERI dentro questa regione bianca
-    # Strategia: riempi i buchi, poi sottrai l'originale per ottenere SOLO i cicli
+    # Strategia: chiudi gap piccoli -> riempi i buchi -> sottrai l'originale
+
+    # NUOVO: Chiusura morfologica per chiudere gap piccoli nei contorni
+    if closing_size > 0:
+        print(f"Chiusura gap piccoli (kernel={closing_size}x{closing_size})...")
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (closing_size, closing_size))
+        mask_closed = cv2.morphologyEx(cleaned_mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+    else:
+        mask_closed = cleaned_mask
 
     print("Riempimento buchi nella maschera...")
-    mask_bool = cleaned_mask > 0
+    mask_bool = mask_closed > 0
     filled = ndi.binary_fill_holes(mask_bool).astype(np.uint8) * 255
 
     print("Sottrazione per ottenere solo i cicli riempiti...")
@@ -581,6 +590,12 @@ def main():
         help='Dimensione kernel per chiusura morfologica (default: 0=disabilitato). Connette gap nei contorni se necessario.'
     )
     parser.add_argument(
+        '--closing-size',
+        type=int,
+        default=3,
+        help='Dimensione kernel per chiudere gap nei cicli aperti (default: 3). Chiude piccoli gap di pochi pixel nei contorni circolari. 0=disabilitato.'
+    )
+    parser.add_argument(
         '--min-skeleton-size',
         type=int,
         default=0,
@@ -639,6 +654,7 @@ def main():
         min_area=args.min_cycle_area,
         max_area=args.max_cycle_area,
         exclude_largest=not args.no_exclude_largest,  # Escludi il più grande per default
+        closing_size=args.closing_size,  # Chiude gap piccoli nei cicli
         debug_single_cycle=args.debug_single_cycle
     )
 
