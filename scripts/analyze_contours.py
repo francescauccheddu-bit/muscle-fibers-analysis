@@ -134,26 +134,32 @@ def identify_closed_contours(skeleton, min_area=100, max_area=None, exclude_larg
     # 3. I cicli (aree circondate da linee) diventano "isole bianche"
     # 4. cv2.findContours trova facilmente queste isole!
 
-    print("Dilatazione skeleton per creare contorni spessi...")
-    # Dilata lo skeleton per creare "anelli" spessi intorno ai cicli
-    # Kernel più grande per assicurare chiusura completa
-    dilate_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-    skeleton_thick = cv2.dilate(skeleton, dilate_kernel, iterations=3)
+    # APPROCCIO PIÙ SEMPLICE: Usa gerarchia di contorni per trovare "buchi"
+    # I cicli sono "buchi" (aree bianche) circondati da linee nere nell'immagine invertita
 
-    print("Inversione skeleton dilatato...")
-    inverted = cv2.bitwise_not(skeleton_thick)
+    print("Inversione skeleton...")
+    inverted = cv2.bitwise_not(skeleton)
 
-    # Riempi i buchi nell'immagine invertita usando binary_fill_holes
-    print("Riempimento aree esterne...")
-    filled = ndi.binary_fill_holes(inverted > 0).astype(np.uint8) * 255
+    print("Ricerca contorni con gerarchia...")
+    # RETR_CCOMP trova 2 livelli: contorni esterni e buchi
+    contours, hierarchy = cv2.findContours(inverted, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
 
-    # Ora sottrai l'inverted per trovare SOLO le aree interne ai cicli
-    print("Estrazione aree interne ai cicli...")
-    cycles_filled = cv2.subtract(filled, inverted)
+    print(f"Trovati {len(contours)} contorni totali")
 
-    # Trova contorni nelle aree riempite (i cicli chiusi)
-    print("Ricerca contorni nei cicli riempiti...")
-    contours, hierarchy = cv2.findContours(cycles_filled, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # La gerarchia è [Next, Previous, First_Child, Parent]
+    # I "buchi" (cicli interni) hanno Parent >= 0
+    if hierarchy is not None:
+        hierarchy = hierarchy[0]  # Estrai il primo elemento
+        hole_contours = []
+        for idx, (contour, h) in enumerate(zip(contours, hierarchy)):
+            # h[3] è il Parent: se >= 0, questo è un "buco" (ciclo interno)
+            if h[3] >= 0:
+                hole_contours.append(contour)
+
+        print(f"Trovati {len(hole_contours)} buchi (cicli candidati)")
+        contours = hole_contours  # Usa solo i buchi
+    else:
+        print("Nessuna gerarchia trovata!")
 
     print(f"Trovati {len(contours)} contorni totali")
 
