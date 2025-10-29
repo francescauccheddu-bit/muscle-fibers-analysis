@@ -129,15 +129,22 @@ def identify_closed_contours_from_mask(cleaned_mask, skeleton, min_area=100, max
         print(f"*** MODALITA DEBUG: Colorerò SOLO il ciclo #{debug_single_cycle} ***")
     print("Identificazione cicli chiusi dalla maschera pulita...")
 
-    # APPROCCIO SEMPLICISSIMO:
-    # La maschera pulita contiene REGIONI BIANCHE PIENE (i cicli)
-    # Basta trovare tutti i contorni esterni!
+    # APPROCCIO CORRETTO:
+    # La maschera pulita ha UN'UNICA regione bianca connessa (tutte le fibre collegate)
+    # I cicli sono i BUCHI NERI dentro questa regione bianca
+    # Strategia: riempi i buchi, poi sottrai l'originale per ottenere SOLO i cicli
 
-    print("Ricerca contorni nella maschera pulita...")
-    # RETR_EXTERNAL trova solo contorni esterni (le regioni bianche)
-    contours, hierarchy = cv2.findContours(cleaned_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    print("Riempimento buchi nella maschera...")
+    mask_bool = cleaned_mask > 0
+    filled = ndi.binary_fill_holes(mask_bool).astype(np.uint8) * 255
 
-    print(f"Trovati {len(contours)} regioni bianche (cicli candidati)")
+    print("Sottrazione per ottenere solo i cicli riempiti...")
+    cycles_only = cv2.subtract(filled, cleaned_mask)
+
+    print("Ricerca contorni nei cicli...")
+    contours, hierarchy = cv2.findContours(cycles_only, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    print(f"Trovati {len(contours)} cicli (regioni riempite)")
 
     # Analizza ogni contorno per trovare i cicli validi
     h, w = skeleton.shape
