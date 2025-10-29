@@ -88,7 +88,7 @@ def clean_and_skeletonize(binary_mask, min_area=500, border_exclusion=0, min_ske
     return skeleton_uint8, cleaned_uint8
 
 
-def identify_closed_contours(skeleton, min_area=100, debug_single_cycle=None):
+def identify_closed_contours(skeleton, min_area=100, max_area=None, debug_single_cycle=None):
     """
     Identifica i percorsi chiusi (cicli) nello scheletro.
 
@@ -97,6 +97,7 @@ def identify_closed_contours(skeleton, min_area=100, debug_single_cycle=None):
     Args:
         skeleton: Scheletro binario (linee 1 pixel)
         min_area: Area minima per considerare una regione chiusa
+        max_area: Area massima per considerare una regione chiusa (None = nessun limite)
         debug_single_cycle: Se specificato, colora solo questo ciclo (1-based)
 
     Returns:
@@ -132,6 +133,7 @@ def identify_closed_contours(skeleton, min_area=100, debug_single_cycle=None):
     closed_areas = []
     skipped_border = 0
     skipped_small = 0
+    skipped_large = 0
 
     h, w = skeleton.shape
 
@@ -156,6 +158,12 @@ def identify_closed_contours(skeleton, min_area=100, debug_single_cycle=None):
         # Controlla area minima
         if area < min_area:
             skipped_small += 1
+            continue
+
+        # Controlla area massima (esclude regioni troppo grandi come lo sfondo)
+        if max_area is not None and area > max_area:
+            skipped_large += 1
+            print(f"  Ciclo troppo grande ESCLUSO: area={area:.0f} px (max={max_area}), bbox={region.bbox}")
             continue
 
         # Questa è un'area interna a un ciclo chiuso!
@@ -188,6 +196,7 @@ def identify_closed_contours(skeleton, min_area=100, debug_single_cycle=None):
     print(f"  Cicli chiusi interni: {closed_count}")
     print(f"  Esclusi (toccano bordi): {skipped_border}")
     print(f"  Esclusi (troppo piccoli): {skipped_small}")
+    print(f"  Esclusi (troppo grandi): {skipped_large}")
     print(f"  Pixel riempiti: {filled_pixels:,} ({filled_pixels/total_pixels*100:.2f}% dell'immagine)")
 
     stats = {
@@ -519,6 +528,12 @@ def main():
         help='Area minima per considerare un ciclo chiuso (default: 1000 pixel)'
     )
     parser.add_argument(
+        '--max-cycle-area',
+        type=int,
+        default=100000,
+        help='Area massima per considerare un ciclo chiuso (default: 100000 pixel). Esclude regioni troppo grandi come lo sfondo.'
+    )
+    parser.add_argument(
         '--min-skeleton-size',
         type=int,
         default=50,
@@ -560,6 +575,7 @@ def main():
     filled_mask, cycle_lines_mask, stats = identify_closed_contours(
         skeleton,
         min_area=args.min_cycle_area,
+        max_area=args.max_cycle_area,
         debug_single_cycle=args.debug_single_cycle
     )
 
