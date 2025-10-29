@@ -134,18 +134,26 @@ def identify_closed_contours(skeleton, min_area=100, max_area=None, exclude_larg
     # 3. I cicli (aree circondate da linee) diventano "isole bianche"
     # 4. cv2.findContours trova facilmente queste isole!
 
-    print("Chiusura gap nello skeleton con morphological closing...")
-    # Usa CLOSING invece di DILATION: chiude gap piccoli ma mantiene la forma
-    # Kernel piccolo (3x3) e solo 1 iterazione per non fondere cicli vicini
-    close_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    skeleton_closed = cv2.morphologyEx(skeleton, cv2.MORPH_CLOSE, close_kernel, iterations=1)
+    print("Dilatazione skeleton per creare contorni spessi...")
+    # Dilata lo skeleton per creare "anelli" spessi intorno ai cicli
+    # Kernel più grande per assicurare chiusura completa
+    dilate_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+    skeleton_thick = cv2.dilate(skeleton, dilate_kernel, iterations=3)
 
-    print("Inversione skeleton...")
-    inverted = cv2.bitwise_not(skeleton_closed)
+    print("Inversione skeleton dilatato...")
+    inverted = cv2.bitwise_not(skeleton_thick)
 
-    # Trova contorni nell'immagine invertita
-    print("Ricerca contorni nelle aree chiuse...")
-    contours, hierarchy = cv2.findContours(inverted, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+    # Riempi i buchi nell'immagine invertita usando binary_fill_holes
+    print("Riempimento aree esterne...")
+    filled = ndi.binary_fill_holes(inverted > 0).astype(np.uint8) * 255
+
+    # Ora sottrai l'inverted per trovare SOLO le aree interne ai cicli
+    print("Estrazione aree interne ai cicli...")
+    cycles_filled = cv2.subtract(filled, inverted)
+
+    # Trova contorni nelle aree riempite (i cicli chiusi)
+    print("Ricerca contorni nei cicli riempiti...")
+    contours, hierarchy = cv2.findContours(cycles_filled, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     print(f"Trovati {len(contours)} contorni totali")
 
