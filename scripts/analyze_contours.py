@@ -134,12 +134,14 @@ def identify_closed_contours(skeleton, min_area=100, max_area=None, exclude_larg
     # 3. I cicli (aree circondate da linee) diventano "isole bianche"
     # 4. cv2.findContours trova facilmente queste isole!
 
-    print("Dilatazione skeleton per chiudere gap...")
-    dilate_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    skeleton_dilated = cv2.dilate(skeleton, dilate_kernel, iterations=2)
+    print("Chiusura gap nello skeleton con morphological closing...")
+    # Usa CLOSING invece di DILATION: chiude gap piccoli ma mantiene la forma
+    # Kernel piccolo (3x3) e solo 1 iterazione per non fondere cicli vicini
+    close_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    skeleton_closed = cv2.morphologyEx(skeleton, cv2.MORPH_CLOSE, close_kernel, iterations=1)
 
     print("Inversione skeleton...")
-    inverted = cv2.bitwise_not(skeleton_dilated)
+    inverted = cv2.bitwise_not(skeleton_closed)
 
     # Trova contorni nell'immagine invertita
     print("Ricerca contorni nelle aree chiuse...")
