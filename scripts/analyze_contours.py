@@ -142,16 +142,22 @@ def identify_closed_contours(skeleton, min_area=100, max_area=None, debug_single
     # Per ogni componente, riempi i buchi
     filled_all = np.zeros_like(skeleton, dtype=bool)
 
+    # Kernel per dilatazione (ispessisce lo scheletro)
+    dilate_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+
     for comp_id in range(1, n_components + 1):
         # Mostra progresso ogni 10 componenti
         if comp_id % 10 == 0 or comp_id == n_components:
             print(f"  Processate {comp_id}/{n_components} componenti...")
 
         # Estrai questa componente
-        component_mask = (skeleton_labeled == comp_id)
+        component_mask = (skeleton_labeled == comp_id).astype(np.uint8) * 255
 
-        # Riempi i buchi in questa componente specifica
-        filled_component = ndi.binary_fill_holes(component_mask)
+        # DILATA lo scheletro per ispessirlo (aiuta binary_fill_holes)
+        dilated = cv2.dilate(component_mask, dilate_kernel, iterations=2)
+
+        # Riempi i buchi nella versione dilatata
+        filled_component = ndi.binary_fill_holes(dilated > 0)
 
         # Aggiungi al risultato totale
         filled_all = filled_all | filled_component
