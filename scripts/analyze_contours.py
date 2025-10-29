@@ -138,8 +138,16 @@ def identify_closed_contours_from_mask(cleaned_mask, skeleton, min_area=100, max
     mask_bool = cleaned_mask > 0
     filled = ndi.binary_fill_holes(mask_bool).astype(np.uint8) * 255
 
+    # DEBUG: Salva immagine riempita per vedere cosa succede
+    cv2.imwrite('debug_filled.png', filled)
+    print("  DEBUG: Salvato debug_filled.png per vedere il risultato di binary_fill_holes")
+
     print("Sottrazione per ottenere solo i cicli riempiti...")
     cycles_only = cv2.subtract(filled, cleaned_mask)
+
+    # DEBUG: Salva cicli estratti
+    cv2.imwrite('debug_cycles_only.png', cycles_only)
+    print("  DEBUG: Salvato debug_cycles_only.png per vedere i cicli estratti")
 
     print("Ricerca contorni nei cicli...")
     contours, hierarchy = cv2.findContours(cycles_only, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
