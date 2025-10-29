@@ -137,11 +137,16 @@ def identify_closed_contours(skeleton, min_area=100, max_area=None, debug_single
     n_components = skeleton_labeled.max()
 
     print(f"Componenti scheletro: {n_components}")
+    print(f"Riempimento buchi per ogni componente (potrebbe richiedere alcuni secondi)...")
 
     # Per ogni componente, riempi i buchi
     filled_all = np.zeros_like(skeleton, dtype=bool)
 
     for comp_id in range(1, n_components + 1):
+        # Mostra progresso ogni 10 componenti
+        if comp_id % 10 == 0 or comp_id == n_components:
+            print(f"  Processate {comp_id}/{n_components} componenti...")
+
         # Estrai questa componente
         component_mask = (skeleton_labeled == comp_id)
 
@@ -151,6 +156,7 @@ def identify_closed_contours(skeleton, min_area=100, max_area=None, debug_single
         # Aggiungi al risultato totale
         filled_all = filled_all | filled_component
 
+    print(f"  Completato!")
     filled_all = (filled_all * 255).astype(np.uint8)
 
     # Le aree interne ai cicli = filled - skeleton originale
