@@ -105,20 +105,175 @@ def clean_and_skeletonize(binary_mask, min_area=500, border_exclusion=0, min_ske
     return skeleton_uint8, cleaned_uint8
 
 
-def identify_closed_contours_from_mask(original_mask, cleaned_mask, skeleton, min_area=100, max_area=None, exclude_largest=True, closing_size=3, debug_single_cycle=None):
+def find_skeleton_endpoints(skeleton):
+    """
+    Trova gli endpoint dello skeleton (pixel con esattamente 1 vicino).
+
+    Args:
+        skeleton: Skeleton binario (uint8)
+
+    Returns:
+        Lista di coordinate (y, x) degli endpoint
+    """
+    # Kernel per contare i vicini (8-connectivity)
+    kernel = np.ones((3, 3), dtype=np.uint8)
+    kernel[1, 1] = 0  # Non contare il pixel centrale
+
+    # Conta i vicini per ogni pixel
+    skeleton_bool = (skeleton > 0).astype(np.uint8)
+    neighbor_count = cv2.filter2D(skeleton_bool, -1, kernel, borderType=cv2.BORDER_CONSTANT)
+
+    # Endpoint = pixel dello skeleton con esattamente 1 vicino
+    endpoints_mask = np.logical_and(skeleton_bool == 1, neighbor_count == 1)
+
+    # Estrai coordinate
+    endpoints = np.argwhere(endpoints_mask)  # Restituisce array di (y, x)
+
+    return endpoints
+
+
+def connect_skeleton_endpoints(skeleton, max_distance=30, max_angle_deg=45):
+    """
+    Connette gli endpoint dello skeleton se sono vicini e l'angolo è ragionevole.
+
+    Args:
+        skeleton: Skeleton binario (uint8)
+        max_distance: Distanza massima in pixel per connettere endpoint (default: 30)
+        max_angle_deg: Angolo massimo in gradi dalla direzione della linea (default: 45)
+
+    Returns:
+        Skeleton con endpoint connessi
+    """
+    print(f"Ricerca endpoint dello skeleton...")
+    endpoints = find_skeleton_endpoints(skeleton)
+    print(f"  Trovati {len(endpoints)} endpoint")
+
+    if len(endpoints) == 0:
+        return skeleton
+
+    print(f"Connessione endpoint entro {max_distance} pixel...")
+    skeleton_connected = skeleton.copy()
+    connections_made = 0
+
+    # Per ogni endpoint, cerca altri endpoint vicini
+    for i, (y1, x1) in enumerate(endpoints):
+        # Mostra progresso ogni 100 endpoint
+        if (i + 1) % 100 == 0:
+            print(f"  Processati {i + 1}/{len(endpoints)} endpoint...")
+
+        # Calcola direzione della linea all'endpoint (guarda 5 pixel indietro)
+        direction_vec = get_skeleton_direction_at_point(skeleton, y1, x1, look_back=5)
+
+        for j in range(i + 1, len(endpoints)):
+            y2, x2 = endpoints[j]
+
+            # Calcola distanza
+            distance = np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+
+            if distance > max_distance:
+                continue
+
+            # Vettore di connessione
+            connection_vec = np.array([x2 - x1, y2 - y1])
+            connection_vec = connection_vec / (np.linalg.norm(connection_vec) + 1e-10)
+
+            # Verifica angolo solo se abbiamo una direzione valida
+            if direction_vec is not None:
+                # Calcola angolo tra direzione della linea e connessione
+                dot_product = np.dot(direction_vec, connection_vec)
+                angle_rad = np.arccos(np.clip(dot_product, -1.0, 1.0))
+                angle_deg = np.degrees(angle_rad)
+
+                # L'angolo dovrebbe essere vicino a 0° (stessa direzione) o 180° (direzione opposta)
+                angle_diff = min(angle_deg, 180 - angle_deg)
+
+                if angle_diff > max_angle_deg:
+                    continue  # Angolo troppo grande, skip
+
+            # Connetti i due endpoint con una linea
+            cv2.line(skeleton_connected, (x1, y1), (x2, y2), 255, thickness=1)
+            connections_made += 1
+
+    print(f"  Connessioni create: {connections_made}")
+    return skeleton_connected
+
+
+def get_skeleton_direction_at_point(skeleton, y, x, look_back=5):
+    """
+    Stima la direzione della linea skeleton ad un punto guardando indietro di alcuni pixel.
+
+    Args:
+        skeleton: Skeleton binario
+        y, x: Coordinate del punto
+        look_back: Numero di pixel da guardare indietro
+
+    Returns:
+        Vettore direzione normalizzato [dx, dy] o None se non trovato
+    """
+    # Trova il path dello skeleton partendo dal punto
+    visited = set()
+    current = (y, x)
+    path = [current]
+
+    for _ in range(look_back):
+        visited.add(current)
+        cy, cx = current
+
+        # Cerca il prossimo pixel vicino
+        found_next = False
+        for dy in [-1, 0, 1]:
+            for dx in [-1, 0, 1]:
+                if dy == 0 and dx == 0:
+                    continue
+
+                ny, nx = cy + dy, cx + dx
+
+                # Controlla bounds
+                if ny < 0 or ny >= skeleton.shape[0] or nx < 0 or nx >= skeleton.shape[1]:
+                    continue
+
+                # Se è un pixel dello skeleton e non è stato visitato
+                if skeleton[ny, nx] > 0 and (ny, nx) not in visited:
+                    path.append((ny, nx))
+                    current = (ny, nx)
+                    found_next = True
+                    break
+
+            if found_next:
+                break
+
+        if not found_next:
+            break
+
+    # Se abbiamo almeno 2 punti, calcola direzione
+    if len(path) >= 2:
+        start = path[0]
+        end = path[-1]
+        direction = np.array([end[1] - start[1], end[0] - start[0]], dtype=float)
+        norm = np.linalg.norm(direction)
+        if norm > 0:
+            return direction / norm
+
+    return None
+
+
+def identify_closed_contours_from_mask(original_mask, cleaned_mask, skeleton, min_area=100, max_area=None, exclude_largest=True, closing_size=3, connect_endpoints=0, debug_single_cycle=None):
     """
     Identifica i percorsi chiusi (cicli) dalla MASCHERA PULITA con closing opzionale.
 
-    APPROCCIO CORRETTO: Applica closing sulla maschera pulita (spessa) prima di riempire buchi.
+    DOPPIO APPROCCIO:
+    1. Se connect_endpoints > 0: Connetti endpoint dello skeleton (veloce, intelligente)
+    2. Altrimenti: Closing morfologico sulla maschera (più lento ma completo)
 
     Args:
         original_mask: Maschera originale (non processata)
-        cleaned_mask: Maschera pulita (su cui applichiamo il closing)
-        skeleton: Scheletro binario (usato solo per visualizzazione)
+        cleaned_mask: Maschera pulita (su cui applichiamo il closing se usato)
+        skeleton: Scheletro binario (su cui connettiamo endpoint se usato)
         min_area: Area minima per considerare una regione chiusa
         max_area: Area massima per considerare una regione chiusa (None = nessun limite)
         exclude_largest: Se True, esclude automaticamente il ciclo più grande (sfondo) (default: True)
-        closing_size: Dimensione kernel per chiusura morfologica dei gap sulla maschera (default: 3, 0=disabilitato)
+        closing_size: Dimensione kernel per chiusura morfologica sulla maschera (default: 3, 0=disabilitato)
+        connect_endpoints: Se > 0, usa endpoint connection invece di closing. Valore = distanza max in pixel (default: 0=disabilitato)
         debug_single_cycle: Se specificato, colora solo questo ciclo (1-based)
 
     Returns:
@@ -129,28 +284,44 @@ def identify_closed_contours_from_mask(original_mask, cleaned_mask, skeleton, mi
     """
     if debug_single_cycle is not None:
         print(f"*** MODALITA DEBUG: Colorerò SOLO il ciclo #{debug_single_cycle} ***")
-    print("Identificazione cicli chiusi dalla maschera pulita...")
 
-    # APPROCCIO CORRETTO:
-    # La maschera pulita ha contorni SPESSI che permettono al closing di chiudere gap
-    # Lo skeleton 1-pixel renderebbe impossibile chiudere gap anche piccoli
+    # DOPPIO APPROCCIO: Endpoint connection O closing morfologico
+    if connect_endpoints > 0:
+        # METODO 1: Connessione endpoint (veloce, intelligente, per gap grandi)
+        print(f"METODO: Connessione endpoint dello skeleton (distanza max: {connect_endpoints} px)")
 
-    # Applica closing sulla maschera se richiesto
-    if closing_size > 0:
-        print(f"Chiusura gap sulla maschera (kernel={closing_size}x{closing_size})...")
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (closing_size, closing_size))
-        mask_closed = cv2.morphologyEx(cleaned_mask, cv2.MORPH_CLOSE, kernel, iterations=1)
-        n_pixels_added = np.sum(mask_closed > 0) - np.sum(cleaned_mask > 0)
-        print(f"  Pixel aggiunti dal closing sulla maschera: {n_pixels_added}")
+        # Connetti gli endpoint dello skeleton
+        skeleton_connected = connect_skeleton_endpoints(skeleton, max_distance=connect_endpoints, max_angle_deg=45)
+
+        # Riempi i buchi nello skeleton connesso
+        print("Riempimento buchi nello skeleton connesso...")
+        skeleton_bool = skeleton_connected > 0
+        filled = ndi.binary_fill_holes(skeleton_bool).astype(np.uint8) * 255
+
+        # Sottrai la maschera pulita per ottenere solo i cicli
+        print("Sottrazione per ottenere solo i cicli riempiti...")
+        cycles_only = cv2.subtract(filled, cleaned_mask)
+
     else:
-        mask_closed = cleaned_mask
+        # METODO 2: Closing morfologico sulla maschera (completo ma più lento)
+        print(f"METODO: Closing morfologico sulla maschera")
 
-    print("Riempimento buchi nella maschera...")
-    mask_bool = mask_closed > 0
-    filled = ndi.binary_fill_holes(mask_bool).astype(np.uint8) * 255
+        # Applica closing sulla maschera se richiesto
+        if closing_size > 0:
+            print(f"  Chiusura gap sulla maschera (kernel={closing_size}x{closing_size})...")
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (closing_size, closing_size))
+            mask_closed = cv2.morphologyEx(cleaned_mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+            n_pixels_added = np.sum(mask_closed > 0) - np.sum(cleaned_mask > 0)
+            print(f"  Pixel aggiunti dal closing sulla maschera: {n_pixels_added}")
+        else:
+            mask_closed = cleaned_mask
 
-    print("Sottrazione per ottenere solo i cicli riempiti...")
-    cycles_only = cv2.subtract(filled, cleaned_mask)
+        print("Riempimento buchi nella maschera...")
+        mask_bool = mask_closed > 0
+        filled = ndi.binary_fill_holes(mask_bool).astype(np.uint8) * 255
+
+        print("Sottrazione per ottenere solo i cicli riempiti...")
+        cycles_only = cv2.subtract(filled, cleaned_mask)
 
     print("Ricerca contorni nei cicli...")
     contours, hierarchy = cv2.findContours(cycles_only, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -634,6 +805,12 @@ def main():
         help='Dimensione kernel per chiudere gap nei cicli aperti (default: 3). Chiude piccoli gap di pochi pixel nei contorni circolari. 0=disabilitato.'
     )
     parser.add_argument(
+        '--connect-endpoints',
+        type=int,
+        default=0,
+        help='NUOVO: Connetti endpoint dello skeleton entro N pixel (default: 0=disabilitato). Metodo veloce e intelligente per chiudere gap grandi (20-30px). Se specificato, sovrascrive --closing-size.'
+    )
+    parser.add_argument(
         '--min-skeleton-size',
         type=int,
         default=0,
@@ -694,6 +871,7 @@ def main():
         max_area=args.max_cycle_area,
         exclude_largest=not args.no_exclude_largest,  # Escludi il più grande per default
         closing_size=args.closing_size,  # Chiude gap piccoli nei cicli
+        connect_endpoints=args.connect_endpoints,  # NUOVO: Connetti endpoint dello skeleton
         debug_single_cycle=args.debug_single_cycle
     )
 
