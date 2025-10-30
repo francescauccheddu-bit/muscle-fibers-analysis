@@ -43,6 +43,12 @@ def segment_adaptive_threshold(image, block_size=101, C=2):
     print("  Metodo: Adaptive Threshold")
     print(f"    Block size: {block_size}, C: {C}")
 
+    # Converti in grayscale se RGB
+    if len(image.shape) == 3:
+        print("    Conversione RGB -> Grayscale")
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # Converti a 8-bit se necessario
     if image.dtype == np.uint16:
         image_8bit = (image / 256).astype(np.uint8)
     else:
