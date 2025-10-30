@@ -107,18 +107,18 @@ def clean_and_skeletonize(binary_mask, min_area=500, border_exclusion=0, min_ske
 
 def identify_closed_contours_from_mask(original_mask, cleaned_mask, skeleton, min_area=100, max_area=None, exclude_largest=True, closing_size=3, debug_single_cycle=None):
     """
-    Identifica i percorsi chiusi (cicli) dalla MASCHERA PULITA, non dallo skeleton.
+    Identifica i percorsi chiusi (cicli) dallo SKELETON con closing opzionale.
 
-    APPROCCIO DEFINITIVO: Usa la maschera pulita che ha contorni spessi e chiusi
+    APPROCCIO OTTIMIZZATO: Applica closing direttamente sullo skeleton (molto più veloce!)
 
     Args:
-        original_mask: Maschera originale (non processata) per identificare pixel nuovi
-        cleaned_mask: Maschera pulita (prima dello skeletonization)
-        skeleton: Scheletro binario (usato solo per visualizzazione)
+        original_mask: Maschera originale (non processata)
+        cleaned_mask: Maschera pulita (usata per sottrazione finale)
+        skeleton: Scheletro binario (su cui applichiamo il closing)
         min_area: Area minima per considerare una regione chiusa
         max_area: Area massima per considerare una regione chiusa (None = nessun limite)
         exclude_largest: Se True, esclude automaticamente il ciclo più grande (sfondo) (default: True)
-        closing_size: Dimensione kernel per chiusura morfologica dei gap (default: 3, 0=disabilitato)
+        closing_size: Dimensione kernel per chiusura morfologica dei gap sullo skeleton (default: 3, 0=disabilitato)
         debug_single_cycle: Se specificato, colora solo questo ciclo (1-based)
 
     Returns:
@@ -129,24 +129,25 @@ def identify_closed_contours_from_mask(original_mask, cleaned_mask, skeleton, mi
     """
     if debug_single_cycle is not None:
         print(f"*** MODALITA DEBUG: Colorerò SOLO il ciclo #{debug_single_cycle} ***")
-    print("Identificazione cicli chiusi dalla maschera pulita...")
+    print("Identificazione cicli chiusi dallo skeleton...")
 
-    # APPROCCIO CORRETTO:
-    # La maschera pulita ha UN'UNICA regione bianca connessa (tutte le fibre collegate)
-    # I cicli sono i BUCHI NERI dentro questa regione bianca
-    # Strategia: chiudi gap piccoli -> riempi i buchi -> sottrai l'originale
+    # APPROCCIO OTTIMIZZATO:
+    # Applica closing direttamente sullo SKELETON (linee 1-pixel)
+    # Questo è MOLTO più veloce perché skeleton ha molti meno pixel bianchi
 
-    # Applica closing se richiesto
+    skeleton_work = skeleton.copy()
+
+    # Applica closing sullo skeleton se richiesto
     if closing_size > 0:
-        print(f"Chiusura gap piccoli (kernel={closing_size}x{closing_size})...")
+        print(f"Chiusura gap sullo skeleton (kernel={closing_size}x{closing_size})...")
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (closing_size, closing_size))
-        mask_closed = cv2.morphologyEx(cleaned_mask, cv2.MORPH_CLOSE, kernel, iterations=1)
-    else:
-        mask_closed = cleaned_mask
+        skeleton_work = cv2.morphologyEx(skeleton_work, cv2.MORPH_CLOSE, kernel, iterations=1)
+        n_pixels_added = np.sum(skeleton_work > 0) - np.sum(skeleton > 0)
+        print(f"  Pixel aggiunti dal closing sullo skeleton: {n_pixels_added}")
 
-    print("Riempimento buchi nella maschera...")
-    mask_bool = mask_closed > 0
-    filled = ndi.binary_fill_holes(mask_bool).astype(np.uint8) * 255
+    print("Riempimento buchi nello skeleton...")
+    skeleton_bool = skeleton_work > 0
+    filled = ndi.binary_fill_holes(skeleton_bool).astype(np.uint8) * 255
 
     print("Sottrazione per ottenere solo i cicli riempiti...")
     cycles_only = cv2.subtract(filled, cleaned_mask)
