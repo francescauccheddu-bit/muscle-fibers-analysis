@@ -77,7 +77,47 @@ python scripts/segment_laminina.py \
 - **Recall**: percentuale di pixel del riferimento catturati
 - **F1-score**: media armonica di precision e recall
 
-### 2. Analisi Contorni e Cicli Chiusi
+### 2. Chiusura Intelligente Cicli (Multi-Threshold)
+
+**Script**: `scripts/close_cycles_multithreshold.py`
+
+**NOVITÀ!** Chiude i cicli aperti usando informazioni di intensità dall'immagine fluorescenza originale. Usa multiple soglie per identificare connessioni plausibili basate sull'intensità.
+
+**Pipeline completa STEP 1 + STEP 2**:
+```bash
+# STEP 1: Crea maschera iniziale
+python scripts/segment_laminina.py \
+  --input data/laminina_originale.png \
+  --reference data/laminina_maschera_reference.png \
+  --output output_segmentation \
+  --method adaptive
+
+# STEP 2: Chiudi cicli intelligentemente
+python scripts/close_cycles_multithreshold.py \
+  --mask output_segmentation/mask_adaptive.png \
+  --fluorescence data/laminina_originale.png \
+  --output output_closed \
+  --n-thresholds 5
+```
+
+**Come funziona**:
+1. Identifica gap regions (cicli non chiusi)
+2. Analizza intensità fluorescenza nei gap
+3. Testa multiple soglie (dal più conservativo al più aggressivo)
+4. Chiude progressivamente solo i cicli dove l'intensità supporta la connessione
+
+**Output**:
+- `mask_closed.png`: Maschera con cicli chiusi
+- `gap_regions.png`: Visualizzazione dei gap identificati
+- `multithreshold_visualization.png`: Comparazione prima/dopo + preview soglie
+- `closing_statistics.json`: Statistiche di miglioramento (pixel chiusi, % improvement)
+
+**Vantaggi rispetto a morphological closing semplice**:
+- Usa informazioni di intensità (non solo morfologia)
+- Più intelligente: chiude solo dove l'intensità supporta la connessione
+- Meno rumore: evita connessioni spurie
+
+### 3. Analisi Contorni e Cicli Chiusi
 
 **Script**: `scripts/analyze_contours.py`
 
