@@ -10,11 +10,11 @@ STEP 4: Calcolo statistiche ed esportazione
 
 Output:
   - laminina_with_centroids.png       # Immagine originale + pallini rossi
-  - skeleton_with_cycles.png          # Skeleton + cicli + pallini
-  - skeleton_thick_with_centroids.png # Skeleton thick + pallini
+  - skeleton_with_centroids.png       # Skeleton + pallini rossi
   - area_distribution.png             # Istogramma aree
   - fibers_statistics.csv             # Statistiche per ogni fibra
   - summary_statistics.csv            # Statistiche sommarie
+  - metadata.json                     # Metadati analisi
 
 Uso:
     python scripts/analyze_laminina_complete.py \
@@ -212,49 +212,21 @@ def create_visualizations(fluorescence, mask, skeleton, fibers_data, contours, o
         cv2.circle(laminina_overlay, (cx, cy), dot_radius, (0, 0, 255), -1)
 
     cv2.imwrite(str(output_dir / 'laminina_with_centroids.png'), laminina_overlay)
-    print(f"     Salvato: laminina_with_centroids.png ({len(centroids)} pallini)")
+    print(f"     Salvato: laminina_with_centroids.png ({len(centroids)} fibre)")
 
-    # 2. Skeleton + cicli + pallini
-    print("  2. Skeleton con cicli e centroidi...")
-
-    # Calcola cicli
-    filled = ndi.binary_fill_holes(mask > 0).astype(np.uint8) * 255
-    cycles = cv2.subtract(filled, mask)
-
-    # Crea RGB
+    # 2. Skeleton + pallini (NO cicli/bordi)
+    print("  2. Skeleton con centroidi...")
     skeleton_rgb = cv2.cvtColor(skeleton, cv2.COLOR_GRAY2RGB)
 
-    # Disegna contorni cicli in rosso
-    valid_contours = []
-    for idx, contour in enumerate(contours):
-        area = cv2.contourArea(contour)
-        if area >= 1000 and idx > 0:  # Esclude il più grande (background)
-            valid_contours.append(contour)
-
-    if len(valid_contours) > 0:
-        cv2.drawContours(skeleton_rgb, valid_contours, -1, (0, 0, 255), 2)
-
-    # Disegna pallini
+    # Disegna solo pallini
     for cy, cx in centroids:
         cv2.circle(skeleton_rgb, (cx, cy), dot_radius, (0, 0, 255), -1)
 
-    cv2.imwrite(str(output_dir / 'skeleton_with_cycles.png'), skeleton_rgb)
-    print(f"     Salvato: skeleton_with_cycles.png")
+    cv2.imwrite(str(output_dir / 'skeleton_with_centroids.png'), skeleton_rgb)
+    print(f"     Salvato: skeleton_with_centroids.png ({len(centroids)} fibre)")
 
-    # 3. Skeleton thick + pallini
-    print("  3. Skeleton thick con centroidi...")
-    kernel_thick = np.ones((5, 5), np.uint8)
-    skeleton_thick = cv2.dilate(skeleton, kernel_thick, iterations=5)
-    skeleton_thick_rgb = cv2.cvtColor(skeleton_thick, cv2.COLOR_GRAY2RGB)
-
-    for cy, cx in centroids:
-        cv2.circle(skeleton_thick_rgb, (cx, cy), dot_radius, (0, 0, 255), -1)
-
-    cv2.imwrite(str(output_dir / 'skeleton_thick_with_centroids.png'), skeleton_thick_rgb)
-    print(f"     Salvato: skeleton_thick_with_centroids.png")
-
-    # 4. Istogramma aree
-    print("  4. Istogramma distribuzione aree...")
+    # 3. Istogramma aree
+    print("  3. Istogramma distribuzione aree...")
     areas = [f['area_px'] for f in fibers_data]
 
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -438,17 +410,9 @@ Esempio:
         C=args.threshold_C
     )
 
-    # Salva maschera iniziale
-    cv2.imwrite(str(output_dir / 'mask_initial.png'), mask_initial)
-    print(f"  Salvato: mask_initial.png")
-
     # STEP 3: Morphological Closing
     print(f"\n{'STEP 3: MORPHOLOGICAL CLOSING':-^80}")
     mask_closed = apply_morphological_closing(mask_initial, kernel_size=args.kernel_size)
-
-    # Salva maschera chiusa
-    cv2.imwrite(str(output_dir / 'mask_closed.png'), mask_closed)
-    print(f"  Salvato: mask_closed.png")
 
     # STEP 4: Identificazione cicli
     print(f"\n{'STEP 4: IDENTIFICAZIONE CICLI':-^80}")
@@ -467,8 +431,6 @@ Esempio:
     print(f"\n{'STEP 5: SKELETONIZZAZIONE':-^80}")
     print("  Creazione skeleton...")
     skeleton = create_skeleton(mask_closed)
-    cv2.imwrite(str(output_dir / 'skeleton.png'), skeleton)
-    print(f"  Salvato: skeleton.png")
 
     # STEP 6: Visualizzazioni
     print(f"\n{'STEP 6: VISUALIZZAZIONI':-^80}")

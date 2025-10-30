@@ -60,19 +60,15 @@ python scripts/analyze_laminina_complete.py \
   --dot-radius 5
 ```
 
-**Output completo**:
+**Output**:
 ```
 output_final/
   ├── laminina_with_centroids.png        # Fluorescenza + pallini rossi
-  ├── skeleton_with_cycles.png           # Skeleton + cicli + pallini
-  ├── skeleton_thick_with_centroids.png  # Skeleton thick + pallini
+  ├── skeleton_with_centroids.png        # Skeleton + pallini rossi
   ├── area_distribution.png              # Istogramma aree fibre
   ├── fibers_statistics.csv              # Dati per ogni fibra
   ├── summary_statistics.csv             # Statistiche sommarie
-  ├── metadata.json                      # Metadati analisi
-  ├── mask_initial.png                   # Maschera segmentata
-  ├── mask_closed.png                    # Maschera dopo closing
-  └── skeleton.png                       # Skeleton sottile
+  └── metadata.json                      # Metadati analisi
 ```
 
 **CSV Output**:
