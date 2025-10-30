@@ -11,6 +11,7 @@ STEP 4: Calcolo statistiche ed esportazione
 Output:
   - laminina_with_centroids.png       # Immagine originale + pallini rossi
   - skeleton_with_centroids.png       # Skeleton + pallini rossi
+  - mask_with_cycles_and_centroids.png # Maschera + bordi cicli + pallini
   - area_distribution.png             # Istogramma aree
   - fibers_statistics.csv             # Statistiche per ogni fibra
   - summary_statistics.csv            # Statistiche sommarie
@@ -225,8 +226,29 @@ def create_visualizations(fluorescence, mask, skeleton, fibers_data, contours, o
     cv2.imwrite(str(output_dir / 'skeleton_with_centroids.png'), skeleton_rgb)
     print(f"     Salvato: skeleton_with_centroids.png ({len(centroids)} fibre)")
 
-    # 3. Istogramma aree
-    print("  3. Istogramma distribuzione aree...")
+    # 3. Maschera + bordi cicli + pallini
+    print("  3. Maschera con cicli e centroidi...")
+    mask_rgb = cv2.cvtColor(mask, cv2.COLOR_GRAY2RGB)
+
+    # Disegna contorni cicli in rosso
+    valid_contours = []
+    for idx, contour in enumerate(contours):
+        area = cv2.contourArea(contour)
+        if area >= 1000:  # Filtra piccoli
+            valid_contours.append(contour)
+
+    if len(valid_contours) > 0:
+        cv2.drawContours(mask_rgb, valid_contours, -1, (0, 0, 255), 2)
+
+    # Disegna pallini
+    for cy, cx in centroids:
+        cv2.circle(mask_rgb, (cx, cy), dot_radius, (0, 0, 255), -1)
+
+    cv2.imwrite(str(output_dir / 'mask_with_cycles_and_centroids.png'), mask_rgb)
+    print(f"     Salvato: mask_with_cycles_and_centroids.png ({len(centroids)} fibre)")
+
+    # 4. Istogramma aree
+    print("  4. Istogramma distribuzione aree...")
     areas = [f['area_px'] for f in fibers_data]
 
     fig, ax = plt.subplots(figsize=(10, 6))

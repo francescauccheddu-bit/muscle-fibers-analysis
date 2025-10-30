@@ -65,6 +65,7 @@ python scripts/analyze_laminina_complete.py \
 output_final/
   ├── laminina_with_centroids.png        # Fluorescenza + pallini rossi
   ├── skeleton_with_centroids.png        # Skeleton + pallini rossi
+  ├── mask_with_cycles_and_centroids.png # Maschera + bordi cicli + pallini
   ├── area_distribution.png              # Istogramma aree fibre
   ├── fibers_statistics.csv              # Dati per ogni fibra
   ├── summary_statistics.csv             # Statistiche sommarie
