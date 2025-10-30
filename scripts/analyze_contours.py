@@ -124,8 +124,7 @@ def identify_closed_contours_from_mask(original_mask, cleaned_mask, skeleton, mi
     Returns:
         filled_mask: Maschera con cicli chiusi riempiti
         centroids: Lista di coordinate (y, x) dei centroidi dei cicli chiusi
-        new_skeleton_lines: Linee skeleton aggiunte dal morphological closing (None se closing_size=0)
-        new_mask_pixels: Pixel maschera pieni aggiunti dal morphological closing (None se closing_size=0)
+        contours_list: Lista dei contorni (cv2 contours) dei cicli identificati
         stats: Statistiche sui percorsi
     """
     if debug_single_cycle is not None:
@@ -138,27 +137,10 @@ def identify_closed_contours_from_mask(original_mask, cleaned_mask, skeleton, mi
     # Strategia: chiudi gap piccoli -> riempi i buchi -> sottrai l'originale
 
     # Applica closing se richiesto
-    new_skeleton_lines = None
-    new_mask_pixels = None
     if closing_size > 0:
         print(f"Chiusura gap piccoli (kernel={closing_size}x{closing_size})...")
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (closing_size, closing_size))
         mask_closed = cv2.morphologyEx(cleaned_mask, cv2.MORPH_CLOSE, kernel, iterations=1)
-
-        # Calcola i PIXEL PIENI della maschera aggiunti dal closing
-        new_mask_pixels = cv2.subtract(mask_closed, cleaned_mask)
-        n_new_mask_pixels = np.sum(new_mask_pixels > 0)
-        print(f"  Pixel maschera aggiunti dal closing: {n_new_mask_pixels}")
-
-        # Calcola skeleton DOPO il closing per vedere le nuove linee
-        print(f"  Calcolo skeleton dopo closing per identificare linee aggiunte...")
-        skeleton_after = skeletonize(mask_closed > 0).astype(np.uint8) * 255
-
-        # Le nuove linee sono la differenza tra skeleton dopo e prima del closing
-        new_skeleton_lines = cv2.subtract(skeleton_after, skeleton)
-
-        n_new_lines = np.sum(new_skeleton_lines > 0)
-        print(f"  Nuove linee skeleton aggiunte dal closing: {n_new_lines} pixel")
     else:
         mask_closed = cleaned_mask
 
@@ -239,6 +221,7 @@ def identify_closed_contours_from_mask(original_mask, cleaned_mask, skeleton, mi
     # Crea maschere e raccogli statistiche
     filled_mask = np.zeros_like(skeleton)
     centroids = []  # Lista di coordinate (y, x)
+    contours_list = []  # Lista dei contorni per disegnare i bordi
     closed_areas = []
 
     closed_count = 0
@@ -267,6 +250,7 @@ def identify_closed_contours_from_mask(original_mask, cleaned_mask, skeleton, mi
             if closed_count != debug_single_cycle:
                 closed_areas.append(cycle['area'])
                 centroids.append(cycle['centroid'])
+                contours_list.append(cycle['contour'])
                 continue  # Salta questo ciclo
             else:
                 print(f"  >>> QUESTO È IL CICLO DA COLORARE! <<<")
@@ -278,11 +262,10 @@ def identify_closed_contours_from_mask(original_mask, cleaned_mask, skeleton, mi
         # Aggiungi alla maschera riempita
         filled_mask = cv2.bitwise_or(filled_mask, contour_mask)
 
-        # OTTIMIZZAZIONE: Rimosso calcolo cycle_lines_mask (non viene usato nelle visualizzazioni finali)
-        # Questo risparmia ~5-10% del tempo di esecuzione
-
+        # Salva centroid e contorno
         closed_areas.append(cycle['area'])
         centroids.append(cycle['centroid'])
+        contours_list.append(cycle['contour'])
 
     # Conta pixel riempiti
     filled_pixels = np.sum(filled_mask > 0)
@@ -305,7 +288,7 @@ def identify_closed_contours_from_mask(original_mask, cleaned_mask, skeleton, mi
         'max_closed_area': np.max(closed_areas) if closed_areas else 0
     }
 
-    return filled_mask, centroids, closed_areas, new_skeleton_lines, new_mask_pixels, stats
+    return filled_mask, centroids, contours_list, closed_areas, stats
 
 
 def analyze_fiber_contours(binary_mask, min_contour_area=100, border_exclusion=0):
@@ -425,12 +408,11 @@ def close_open_contours(binary_mask, open_contours, max_gap=10):
     return result
 
 
-def visualize_skeleton(original, cleaned, skeleton, filled_mask, centroids, closed_areas, new_skeleton_lines, new_mask_pixels, stats, output_dir, base_name, closing_size=3, visualize_mode='fill', dot_radius=10):
+def visualize_skeleton(original, cleaned, skeleton, filled_mask, centroids, contours_list, closed_areas, stats, output_dir, base_name, closing_size=3, visualize_mode='fill', dot_radius=10):
     """Visualizza il risultato della scheletonizzazione e identificazione percorsi chiusi.
 
     Args:
-        new_skeleton_lines: Linee skeleton aggiunte dal morphological closing (None se disabilitato)
-        new_mask_pixels: Pixel maschera pieni aggiunti dal morphological closing (None se disabilitato)
+        contours_list: Lista dei contorni dei cicli per disegnare i bordi
         closing_size: Dimensione kernel del morphological closing (usato nel nome file)
         visualize_mode: 'fill' (riempi cicli in verde) o 'dot' (puntino rosso al centro)
         dot_radius: Raggio del puntino rosso in pixel (default: 10)
@@ -448,20 +430,8 @@ def visualize_skeleton(original, cleaned, skeleton, filled_mask, centroids, clos
         # Suffisso per nome file con closing_size
         closing_suffix = f"_closing{closing_size}" if closing_size > 0 else ""
 
-        # Conta le linee verdi una sola volta
-        n_green_lines = 0
-        if new_skeleton_lines is not None:
-            n_green_lines = np.sum(new_skeleton_lines > 0)
-
-        # 1. SKELETON con linee verdi (nuove dal closing) e puntini rossi
+        # 1. SKELETON con puntini rossi
         skeleton_rgb = cv2.cvtColor(skeleton, cv2.COLOR_GRAY2RGB)
-
-        # Se ci sono nuove linee skeleton dal closing, aggiungi in VERDE
-        if n_green_lines > 0:
-            print(f"  Aggiunta visualizzazione {n_green_lines} pixel di linee verdi (skeleton dopo closing)...")
-            skeleton_rgb[new_skeleton_lines > 0] = [0, 255, 0]  # BGR: verde per linee nuove
-
-        # Aggiungi pallini rossi DOPO il verde (così sono visibili sopra)
         for centroid in centroids:
             cy, cx = int(centroid[0]), int(centroid[1])
             cv2.circle(skeleton_rgb, (cx, cy), dot_radius, (0, 0, 255), -1)  # BGR: rosso
@@ -470,17 +440,15 @@ def visualize_skeleton(original, cleaned, skeleton, filled_mask, centroids, clos
         cv2.imwrite(str(skeleton_dots_path), skeleton_rgb)
         print(f"  Salvato: {skeleton_dots_path}")
 
-        # 2. MASCHERA ORIGINALE con pixel PIENI verdi (nuovi dal closing) e puntini rossi
+        # 2. MASCHERA ORIGINALE con bordi cicli rossi e puntini rossi
         original_rgb = cv2.cvtColor(original, cv2.COLOR_GRAY2RGB)
 
-        # Se ci sono nuovi pixel maschera dal closing, aggiungi in VERDE
-        if new_mask_pixels is not None:
-            n_green_mask_pixels = np.sum(new_mask_pixels > 0)
-            if n_green_mask_pixels > 0:
-                print(f"  Aggiunta visualizzazione {n_green_mask_pixels} pixel PIENI verdi sulla maschera originale...")
-                original_rgb[new_mask_pixels > 0] = [0, 255, 0]  # BGR: verde per pixel pieni nuovi
+        # Disegna bordi dei cicli in rosso
+        if len(contours_list) > 0:
+            print(f"  Disegno {len(contours_list)} bordi cicli in rosso...")
+            cv2.drawContours(original_rgb, contours_list, -1, (0, 0, 255), 2)  # BGR: rosso, thickness=2
 
-        # Aggiungi pallini rossi DOPO il verde (così sono visibili sopra)
+        # Aggiungi pallini rossi ai centroidi DOPO i bordi
         for centroid in centroids:
             cy, cx = int(centroid[0]), int(centroid[1])
             cv2.circle(original_rgb, (cx, cy), dot_radius, (0, 0, 255), -1)  # BGR: rosso
@@ -489,29 +457,7 @@ def visualize_skeleton(original, cleaned, skeleton, filled_mask, centroids, clos
         cv2.imwrite(str(overlay_path), original_rgb)
         print(f"  Salvato: {overlay_path}")
 
-        # 3. SKELETON RIMPOLPATO (thick) con linee verdi e puntini rossi
-        print(f"  Creazione skeleton rimpolpato...")
-        # Dilata lo skeleton per renderlo più spesso (simile alla maschera originale)
-        kernel_thick = np.ones((3, 3), np.uint8)
-        skeleton_thick = cv2.dilate(skeleton, kernel_thick, iterations=2)
-        skeleton_thick_rgb = cv2.cvtColor(skeleton_thick, cv2.COLOR_GRAY2RGB)
-
-        # Se ci sono nuove linee skeleton dal closing, dilata anche quelle e aggiungi in VERDE
-        if n_green_lines > 0:
-            print(f"  Aggiunta visualizzazione linee verdi rimpolpate...")
-            new_lines_thick = cv2.dilate(new_skeleton_lines, kernel_thick, iterations=2)
-            skeleton_thick_rgb[new_lines_thick > 0] = [0, 255, 0]  # BGR: verde per linee nuove
-
-        # Aggiungi pallini rossi DOPO il verde
-        for centroid in centroids:
-            cy, cx = int(centroid[0]), int(centroid[1])
-            cv2.circle(skeleton_thick_rgb, (cx, cy), dot_radius, (0, 0, 255), -1)  # BGR: rosso
-
-        skeleton_thick_path = output_dir / f"{base_name}_SKELETON_THICK{closing_suffix}.png"
-        cv2.imwrite(str(skeleton_thick_path), skeleton_thick_rgb)
-        print(f"  Salvato: {skeleton_thick_path}")
-
-        # 4. ISTOGRAMMA distribuzione aree
+        # 3. ISTOGRAMMA distribuzione aree
         if len(closed_areas) > 0:
             print(f"  Creazione istogramma distribuzione aree...")
             fig, ax = plt.subplots(figsize=(12, 6))
@@ -723,7 +669,7 @@ def main():
 
     # Identifica percorsi chiusi
     print("\nIdentificazione percorsi chiusi...")
-    filled_mask, centroids, closed_areas, new_skeleton_lines, new_mask_pixels, stats = identify_closed_contours_from_mask(
+    filled_mask, centroids, contours_list, closed_areas, stats = identify_closed_contours_from_mask(
         original,  # Maschera originale per identificare pixel completamente nuovi
         cleaned,   # Maschera pulita (dopo remove_small_objects)
         skeleton,  # Passa skeleton per visualizzazione
@@ -742,7 +688,7 @@ def main():
     # Visualizza
     print("\nCreazione visualizzazioni...")
     visualize_skeleton(
-        original, cleaned, skeleton, filled_mask, centroids, closed_areas, new_skeleton_lines, new_mask_pixels, stats,
+        original, cleaned, skeleton, filled_mask, centroids, contours_list, closed_areas, stats,
         args.output, base_name,
         closing_size=args.closing_size,
         visualize_mode=args.visualize_mode,
