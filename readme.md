@@ -40,6 +40,52 @@ pip install -r requirements.txt
 
 ## Script Disponibili
 
+### 🚀 Pipeline Completa (RACCOMANDATO)
+
+**Script**: `scripts/analyze_laminina_complete.py`
+
+**Pipeline all-in-one** che fa tutto automaticamente:
+1. Segmentazione da fluorescenza (adaptive threshold)
+2. Morphological closing (K15)
+3. Identificazione cicli e calcolo statistiche
+4. Generazione visualizzazioni e CSV
+
+**Uso rapido**:
+```bash
+python scripts/analyze_laminina_complete.py \
+  --input data/laminina_originale.png \
+  --output output_final \
+  --kernel-size 15 \
+  --min-fiber-area 1000 \
+  --dot-radius 5
+```
+
+**Output completo**:
+```
+output_final/
+  ├── laminina_with_centroids.png        # Fluorescenza + pallini rossi
+  ├── skeleton_with_cycles.png           # Skeleton + cicli + pallini
+  ├── skeleton_thick_with_centroids.png  # Skeleton thick + pallini
+  ├── area_distribution.png              # Istogramma aree fibre
+  ├── fibers_statistics.csv              # Dati per ogni fibra
+  ├── summary_statistics.csv             # Statistiche sommarie
+  ├── metadata.json                      # Metadati analisi
+  ├── mask_initial.png                   # Maschera segmentata
+  ├── mask_closed.png                    # Maschera dopo closing
+  └── skeleton.png                       # Skeleton sottile
+```
+
+**CSV Output**:
+- `fibers_statistics.csv`: fiber_id, area_px, centroid_x, centroid_y, perimeter_px, equiv_diameter_px, circularity, aspect_ratio, bbox_*
+- `summary_statistics.csv`: n_fibers, mean_area_px, median_area_px, std_area_px, quartili, coverage, ecc.
+
+**Parametri principali**:
+- `--kernel-size 15`: dimensione closing (raccomandato 15)
+- `--min-fiber-area 1000`: area minima fibra (filtra rumore)
+- `--dot-radius 5`: raggio pallini (3-10)
+
+---
+
 ### 1. Segmentazione Automatica Fluorescenza Laminina
 
 **Script**: `scripts/segment_laminina.py`
