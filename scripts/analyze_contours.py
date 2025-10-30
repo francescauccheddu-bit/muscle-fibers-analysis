@@ -457,7 +457,27 @@ def visualize_skeleton(original, cleaned, skeleton, filled_mask, centroids, cont
         cv2.imwrite(str(overlay_path), original_rgb)
         print(f"  Salvato: {overlay_path}")
 
-        # 3. ISTOGRAMMA distribuzione aree
+        # 3. SKELETON RIMPOLPATO (thick) - molto spesso per somigliare alla maschera originale
+        print(f"  Creazione skeleton rimpolpato (thick)...")
+        # Dilata lo skeleton per renderlo MOLTO più spesso, simile alla maschera originale
+        kernel_thick = np.ones((5, 5), np.uint8)
+        skeleton_thick = cv2.dilate(skeleton, kernel_thick, iterations=5)  # Aumentate iterazioni
+        skeleton_thick_rgb = cv2.cvtColor(skeleton_thick, cv2.COLOR_GRAY2RGB)
+
+        # Disegna bordi dei cicli in rosso anche qui
+        if len(contours_list) > 0:
+            cv2.drawContours(skeleton_thick_rgb, contours_list, -1, (0, 0, 255), 2)  # BGR: rosso
+
+        # Aggiungi pallini rossi ai centroidi
+        for centroid in centroids:
+            cy, cx = int(centroid[0]), int(centroid[1])
+            cv2.circle(skeleton_thick_rgb, (cx, cy), dot_radius, (0, 0, 255), -1)  # BGR: rosso
+
+        skeleton_thick_path = output_dir / f"{base_name}_SKELETON_THICK{closing_suffix}.png"
+        cv2.imwrite(str(skeleton_thick_path), skeleton_thick_rgb)
+        print(f"  Salvato: {skeleton_thick_path}")
+
+        # 4. ISTOGRAMMA distribuzione aree
         if len(closed_areas) > 0:
             print(f"  Creazione istogramma distribuzione aree...")
             fig, ax = plt.subplots(figsize=(12, 6))
