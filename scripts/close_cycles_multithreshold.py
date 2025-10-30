@@ -24,11 +24,10 @@ from pathlib import Path
 import numpy as np
 import cv2
 import matplotlib.pyplot as plt
-from skimage import morphology
 from scipy import ndimage as ndi
 
 
-def find_gap_regions(mask, skeleton):
+def find_gap_regions(mask):
     """
     Identifica le regioni di gap dove i cicli non sono chiusi.
 
@@ -112,7 +111,7 @@ def analyze_intensity_in_gaps(fluorescence, gap_mask, n_thresholds=5):
     return threshold_masks
 
 
-def progressive_closing(mask, threshold_masks, skeleton):
+def progressive_closing(mask, threshold_masks):
     """
     Chiude i cicli progressivamente usando le maschere multi-threshold.
 
@@ -337,13 +336,10 @@ def main():
     if mask.shape != fluorescence.shape:
         raise ValueError(f"Dimensioni diverse! Mask: {mask.shape}, Fluor: {fluorescence.shape}")
 
-    # Skeleton per analisi
-    skeleton = morphology.skeletonize(mask > 0).astype(np.uint8) * 255
-
     # STEP 1: Trova gap
     print(f"\n2. IDENTIFICAZIONE GAP")
     print("-" * 80)
-    gap_mask, potential_cycles = find_gap_regions(mask, skeleton)
+    gap_mask, potential_cycles = find_gap_regions(mask)
 
     # STEP 2: Analizza intensità con multi-threshold
     print(f"\n3. ANALISI MULTI-THRESHOLD")
@@ -357,7 +353,7 @@ def main():
     # STEP 3: Chiusura progressiva
     print(f"\n4. CHIUSURA PROGRESSIVA")
     print("-" * 80)
-    mask_closed = progressive_closing(mask, threshold_masks, skeleton)
+    mask_closed = progressive_closing(mask, threshold_masks)
 
     # STEP 4: Statistiche
     print(f"\n5. STATISTICHE")
