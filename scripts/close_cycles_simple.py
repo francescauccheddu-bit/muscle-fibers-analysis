@@ -25,32 +25,49 @@ import json
 def close_and_measure(mask, kernel_size):
     """
     Applica morphological closing e misura i cicli chiusi.
+
+    Conta il NUMERO di cicli (contorni separati), non i pixel totali.
     """
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
     mask_closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
 
-    # Misura cicli prima e dopo
+    # Trova cicli prima e dopo
     original_filled = ndi.binary_fill_holes(mask > 0).astype(np.uint8) * 255
     closed_filled = ndi.binary_fill_holes(mask_closed > 0).astype(np.uint8) * 255
 
     cycles_original = cv2.subtract(original_filled, mask)
     cycles_closed = cv2.subtract(closed_filled, mask_closed)
 
-    n_cycles_original = np.sum(cycles_original > 0)
-    n_cycles_closed = np.sum(cycles_closed > 0)
+    # Conta NUMERO di cicli (contorni separati), non pixel
+    contours_orig, _ = cv2.findContours(cycles_original, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours_after, _ = cv2.findContours(cycles_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Filtra cicli molto piccoli (rumore)
+    min_cycle_area = 100
+    contours_orig = [c for c in contours_orig if cv2.contourArea(c) >= min_cycle_area]
+    contours_after = [c for c in contours_after if cv2.contourArea(c) >= min_cycle_area]
+
+    n_cycles_original = len(contours_orig)
+    n_cycles_closed_after = len(contours_after)
     n_pixels_added = np.sum(cv2.subtract(mask_closed, mask) > 0)
 
-    improvement = n_cycles_original - n_cycles_closed
+    # Pixel di ciclo
+    cycle_pixels_original = np.sum(cycles_original > 0)
+    cycle_pixels_after = np.sum(cycles_closed > 0)
+
+    improvement = n_cycles_original - n_cycles_closed_after
     improvement_pct = (improvement / n_cycles_original * 100) if n_cycles_original > 0 else 0
 
     return {
         'kernel_size': kernel_size,
         'mask_closed': mask_closed,
-        'cycles_original': int(n_cycles_original),
-        'cycles_closed': int(n_cycles_closed),
-        'cycles_improvement': int(improvement),
+        'n_cycles_original': int(n_cycles_original),
+        'n_cycles_after': int(n_cycles_closed_after),
+        'cycles_closed': int(improvement),
         'improvement_percentage': float(improvement_pct),
-        'pixels_added': int(n_pixels_added)
+        'pixels_added': int(n_pixels_added),
+        'cycle_pixels_original': int(cycle_pixels_original),
+        'cycle_pixels_after': int(cycle_pixels_after)
     }
 
 
@@ -89,24 +106,27 @@ def main():
     print(f"\nKernel sizes da testare: {kernel_sizes}")
 
     # Test ogni kernel
-    print(f"\n{'Kernel':<10} {'Cicli Orig':<15} {'Cicli Dopo':<15} {'Miglioramento':<15} {'% Miglior.':<12} {'Pixel+':<12}")
+    print(f"\n{'Kernel':<10} {'#Cicli Orig':<15} {'#Cicli Dopo':<15} {'Cicli Chiusi':<15} {'% Miglior.':<12} {'Pixel+':<12}")
     print("-" * 80)
 
     results = []
     for kernel_size in kernel_sizes:
         result = close_and_measure(mask, kernel_size)
+
+        # Salva maschera prima di rimuoverla dal dict
+        mask_path = output_dir / f"mask_closed_k{kernel_size}.png"
+        cv2.imwrite(str(mask_path), result['mask_closed'])
+
+        # Rimuovi mask_closed prima di aggiungerlo ai results (non è JSON serializable)
+        mask_closed = result.pop('mask_closed')
         results.append(result)
 
         print(f"{result['kernel_size']:<10} "
-              f"{result['cycles_original']:>14,} "
+              f"{result['n_cycles_original']:>14,} "
+              f"{result['n_cycles_after']:>14,} "
               f"{result['cycles_closed']:>14,} "
-              f"{result['cycles_improvement']:>14,} "
               f"{result['improvement_percentage']:>11.1f}% "
               f"{result['pixels_added']:>11,}")
-
-        # Salva maschera
-        mask_path = output_dir / f"mask_closed_k{kernel_size}.png"
-        cv2.imwrite(str(mask_path), result['mask_closed'])
 
     # Trova migliore
     best = max(results, key=lambda x: x['improvement_percentage'])
@@ -147,15 +167,18 @@ def main():
         mask
     )
     axes[0, 1].imshow(cycles_orig, cmap='hot')
-    axes[0, 1].set_title(f'Cicli Aperti: {results[0]["cycles_original"]:,} pixel', fontweight='bold')
+    axes[0, 1].set_title(f'Cicli Aperti: {results[0]["n_cycles_original"]:,} contorni', fontweight='bold')
     axes[0, 1].axis('off')
 
     # Righe successive: kernel testati
     for plot_idx, result_idx in enumerate(indices, start=1):
         result = results[result_idx]
 
+        # Ricarica maschera chiusa dal file
+        mask_closed = cv2.imread(str(output_dir / f"mask_closed_k{result['kernel_size']}.png"), cv2.IMREAD_GRAYSCALE)
+
         # Maschera chiusa
-        axes[plot_idx, 0].imshow(result['mask_closed'], cmap='gray')
+        axes[plot_idx, 0].imshow(mask_closed, cmap='gray')
         axes[plot_idx, 0].set_title(
             f"Kernel {result['kernel_size']}×{result['kernel_size']} | "
             f"+{result['pixels_added']:,} pixel",
@@ -165,13 +188,13 @@ def main():
 
         # Cicli residui
         cycles_after = cv2.subtract(
-            ndi.binary_fill_holes(result['mask_closed'] > 0).astype(np.uint8) * 255,
-            result['mask_closed']
+            ndi.binary_fill_holes(mask_closed > 0).astype(np.uint8) * 255,
+            mask_closed
         )
         axes[plot_idx, 1].imshow(cycles_after, cmap='hot')
         axes[plot_idx, 1].set_title(
-            f"Cicli Residui: {result['cycles_closed']:,} pixel | "
-            f"Miglioramento: {result['improvement_percentage']:.1f}%",
+            f"Cicli Residui: {result['n_cycles_after']:,} contorni | "
+            f"Chiusi: {result['cycles_closed']} ({result['improvement_percentage']:.1f}%)",
             fontsize=10
         )
         axes[plot_idx, 1].axis('off')
