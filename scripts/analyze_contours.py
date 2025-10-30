@@ -457,18 +457,14 @@ def visualize_skeleton(original, cleaned, skeleton, filled_mask, centroids, cont
         cv2.imwrite(str(overlay_path), original_rgb)
         print(f"  Salvato: {overlay_path}")
 
-        # 3. SKELETON RIMPOLPATO (thick) - molto spesso per somigliare alla maschera originale
+        # 3. SKELETON RIMPOLPATO (thick) - solo puntini, senza bordi
         print(f"  Creazione skeleton rimpolpato (thick)...")
         # Dilata lo skeleton per renderlo MOLTO più spesso, simile alla maschera originale
         kernel_thick = np.ones((5, 5), np.uint8)
         skeleton_thick = cv2.dilate(skeleton, kernel_thick, iterations=5)  # Aumentate iterazioni
         skeleton_thick_rgb = cv2.cvtColor(skeleton_thick, cv2.COLOR_GRAY2RGB)
 
-        # Disegna bordi dei cicli in rosso anche qui
-        if len(contours_list) > 0:
-            cv2.drawContours(skeleton_thick_rgb, contours_list, -1, (0, 0, 255), 2)  # BGR: rosso
-
-        # Aggiungi pallini rossi ai centroidi
+        # Aggiungi SOLO pallini rossi ai centroidi (NO bordi)
         for centroid in centroids:
             cy, cx = int(centroid[0]), int(centroid[1])
             cv2.circle(skeleton_thick_rgb, (cx, cy), dot_radius, (0, 0, 255), -1)  # BGR: rosso
