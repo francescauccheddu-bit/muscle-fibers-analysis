@@ -1,0 +1,14 @@
+metric,value
+n_fibers,2456.00
+total_area_px,19795662.00
+mean_area_px,8060.12
+median_area_px,5944.00
+std_area_px,8929.42
+min_area_px,1001.00
+max_area_px,133738.00
+q25_area_px,3389.75
+q75_area_px,9577.88
+image_width_px,8984.00
+image_height_px,10110.00
+image_total_px,90828240.00
+mask_coverage_percent,79.50
