@@ -10,9 +10,9 @@ STEP 4: Calcolo statistiche ed esportazione
 
 Output:
   === VISUALIZZAZIONI FASI (con overlay trasparente) ===
-  - step1_segmentation_overlay.png    # Contorni MAGENTA segmentazione su fluorescenza 50% trasparente
-  - step2_closing_overlay.png         # Contorni ARANCIONI closing + gap cyan su fluorescenza trasparente
-  - step3_cycles_overlay.png          # Contorni BLU cicli chiusi + centroidi rossi su trasparente
+  - step1_segmentation_overlay.png    # Contorni MAGENTA segmentazione iniziale su fluorescenza 50% trasparente
+  - step2_closing_overlay.png         # Contorni ARANCIONI dopo closing su fluorescenza trasparente
+  - step3_cycles_overlay.png          # Contorni BLU cicli chiusi + centroidi ROSSI (1:1) su trasparente
   - step4_skeleton_overlay.png        # Skeleton blu + centroidi rossi su trasparente
 
   === VISUALIZZAZIONI FINALI ===
@@ -266,15 +266,12 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
     closing_overlay = fluor_rgb.copy()
     closing_overlay = (closing_overlay * 0.5).astype(np.uint8)  # 50% trasparenza
 
-    # Trova e disegna SOLO i contorni della maschera chiusa
+    # Trova e disegna SOLO i contorni della maschera chiusa in arancione
     contours_closed, _ = cv2.findContours(mask_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    cv2.drawContours(closing_overlay, contours_closed, -1, (0, 200, 255), 2)  # Arancione spessore 2
-
-    # Gap aggiunti in cyan brillante
-    closing_overlay[pixels_added > 0] = [255, 255, 0]  # Cyan per gap aggiunti
+    cv2.drawContours(closing_overlay, contours_closed, -1, (0, 165, 255), 2)  # Arancione spessore 2
 
     cv2.imwrite(str(output_dir / 'step2_closing_overlay.png'), closing_overlay)
-    print(f"     Salvato: step2_closing_overlay.png (arancione = contorni closing, cyan = gap)")
+    print(f"     Salvato: step2_closing_overlay.png (contorni arancioni = {len(contours_closed)} oggetti)")
 
     # === FASE 3: Cicli Chiusi (solo quelli validi con centroidi) ===
     print("  3. Cicli chiusi overlay con contorni blu...")
@@ -290,32 +287,35 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
     # Crea maschera solo per i cicli validi (quelli in fibers_data)
     valid_cycles_mask = np.zeros_like(cycles)
 
+    cycles_overlay = fluor_rgb.copy()
+    cycles_overlay = (cycles_overlay * 0.5).astype(np.uint8)  # 50% trasparenza
+
+    # Traccia quali fibre hanno trovato un contorno corrispondente
+    matched_fibers = []
+
     # Per ogni fibra in fibers_data, trova il contorno corrispondente
     for fiber in fibers_data:
         cx, cy = int(fiber['centroid_x']), int(fiber['centroid_y'])
         # Trova quale contorno contiene questo centroide
+        matched = False
         for contour in cycles_contours:
             if cv2.pointPolygonTest(contour, (cx, cy), False) >= 0:
-                cv2.drawContours(valid_cycles_mask, [contour], -1, 255, -1)
-                break
-
-    cycles_overlay = fluor_rgb.copy()
-    cycles_overlay = (cycles_overlay * 0.5).astype(np.uint8)  # 50% trasparenza
-
-    # Disegna SOLO i contorni dei cicli validi in blu brillante
-    for fiber in fibers_data:
-        cx, cy = int(fiber['centroid_x']), int(fiber['centroid_y'])
-        for contour in cycles_contours:
-            if cv2.pointPolygonTest(contour, (cx, cy), False) >= 0:
+                # Disegna contorno blu
                 cv2.drawContours(cycles_overlay, [contour], -1, (255, 0, 0), 2)  # Blu spessore 2
+                cv2.drawContours(valid_cycles_mask, [contour], -1, 255, -1)
+                matched_fibers.append((cy, cx))  # Salva centroide matched
+                matched = True
                 break
 
-    # Disegna pallini rossi per i centroidi
-    for cy, cx in centroids:
+        if not matched:
+            print(f"       ⚠️  Fibra {fiber['fiber_id']} centroide ({cx},{cy}) senza contorno corrispondente!")
+
+    # Disegna SOLO i pallini rossi per i centroidi matched
+    for cy, cx in matched_fibers:
         cv2.circle(cycles_overlay, (cx, cy), dot_radius, (0, 0, 255), -1)
 
     cv2.imwrite(str(output_dir / 'step3_cycles_overlay.png'), cycles_overlay)
-    print(f"     Salvato: step3_cycles_overlay.png ({len(centroids)} contorni blu + centroidi rossi)")
+    print(f"     Salvato: step3_cycles_overlay.png ({len(matched_fibers)} contorni blu + centroidi rossi)")
 
     # === FASE 4: Skeletonizzazione ===
     print("  4. Skeleton overlay con profili blu...")
