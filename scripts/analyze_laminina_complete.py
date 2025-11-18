@@ -219,17 +219,20 @@ def create_closing_visualization(mask_initial, mask_closed, output_dir):
     print(f"  - Pixel aggiunti ({n_pixels_added:,}): verde")
 
 
-def create_visualizations(fluorescence, mask, skeleton, fibers_data, contours, output_dir, dot_radius=5):
+def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fibers_data, contours, output_dir, dot_radius=5):
     """
     Crea tutte le visualizzazioni.
     """
     print("\nCreazione visualizzazioni...")
 
+    # Calcola pixel aggiunti (gap chiusi)
+    pixels_added = cv2.subtract(mask_closed, mask_initial)
+
     # Prepara dati
     centroids = [(int(f['centroid_y']), int(f['centroid_x'])) for f in fibers_data]
 
-    # 1. Laminina originale + pallini
-    print("  1. Laminina con centroidi...")
+    # 1. Laminina originale + gap blu + pallini rossi
+    print("  1. Laminina con centroidi e gap...")
     if len(fluorescence.shape) == 2:
         laminina_overlay = cv2.cvtColor(fluorescence, cv2.COLOR_GRAY2RGB)
     else:
@@ -238,22 +241,36 @@ def create_visualizations(fluorescence, mask, skeleton, fibers_data, contours, o
     if laminina_overlay.dtype == np.uint16:
         laminina_overlay = (laminina_overlay / 256).astype(np.uint8)
 
+    # Sovrapponi gap in blu chiaro (cyan)
+    laminina_overlay[pixels_added > 0] = [255, 255, 0]  # Cyan (blu chiaro)
+
+    # Disegna pallini rossi sopra
     for cy, cx in centroids:
         cv2.circle(laminina_overlay, (cx, cy), dot_radius, (0, 0, 255), -1)
 
     cv2.imwrite(str(output_dir / 'laminina_with_centroids.png'), laminina_overlay)
-    print(f"     Salvato: laminina_with_centroids.png ({len(centroids)} fibre)")
+    print(f"     Salvato: laminina_with_centroids.png ({len(centroids)} fibre + gap blu)")
 
-    # 2. Skeleton + pallini (NO cicli/bordi)
-    print("  2. Skeleton con centroidi...")
-    skeleton_rgb = cv2.cvtColor(skeleton, cv2.COLOR_GRAY2RGB)
+    # 2. Circuiti chiusi (fibre) + gap blu + pallini rossi
+    print("  2. Circuiti chiusi con centroidi e gap...")
 
-    # Disegna solo pallini
+    # Calcola i cicli chiusi (filled - mask)
+    mask_bool = mask_closed > 0
+    filled = ndi.binary_fill_holes(mask_bool).astype(np.uint8) * 255
+    cycles = cv2.subtract(filled, mask_closed)
+
+    # Crea immagine RGB con solo i cicli chiusi (bianco su nero)
+    cycles_rgb = cv2.cvtColor(cycles, cv2.COLOR_GRAY2RGB)
+
+    # Sovrapponi gap in blu chiaro (cyan)
+    cycles_rgb[pixels_added > 0] = [255, 255, 0]  # Cyan (blu chiaro)
+
+    # Disegna pallini rossi sopra per i centroidi
     for cy, cx in centroids:
-        cv2.circle(skeleton_rgb, (cx, cy), dot_radius, (0, 0, 255), -1)
+        cv2.circle(cycles_rgb, (cx, cy), dot_radius, (0, 0, 255), -1)
 
-    cv2.imwrite(str(output_dir / 'skeleton_with_centroids.png'), skeleton_rgb)
-    print(f"     Salvato: skeleton_with_centroids.png ({len(centroids)} fibre)")
+    cv2.imwrite(str(output_dir / 'skeleton_with_centroids.png'), cycles_rgb)
+    print(f"     Salvato: skeleton_with_centroids.png ({len(centroids)} circuiti chiusi + gap blu)")
 
     # 3. Istogramma aree
     print("  3. Istogramma distribuzione aree...")
@@ -549,7 +566,7 @@ Esempi:
     create_closing_visualization(mask_initial, mask_closed, output_dir)
 
     create_visualizations(
-        fluorescence, mask_closed, skeleton, fibers_data, contours,
+        fluorescence, mask_initial, mask_closed, skeleton, fibers_data, contours,
         output_dir, dot_radius=args.dot_radius
     )
 
