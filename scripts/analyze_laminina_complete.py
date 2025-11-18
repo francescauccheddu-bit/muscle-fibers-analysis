@@ -333,30 +333,60 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
     cv2.imwrite(str(output_dir / 'step3_cycles_overlay.png'), cycles_overlay)
     print(f"     Salvato: step3_cycles_overlay.png ({len(fibers_data)} contorni blu + centroidi rossi 1:1)")
 
-    # === FASE 4: Skeletonizzazione (SOLO CICLI CHIUSI, senza rametti) ===
-    print("  4. Skeleton overlay su fluorescenza originale (100% opacità)...")
-    # Usa immagine originale al 100% (NO trasparenza)
-    skeleton_overlay = fluor_rgb.copy()
+    # === FASE 4: Skeletonizzazione con differenza gap (NUOVA LOGICA) ===
+    print("  4. Skeleton overlay con differenza gap...")
 
-    # Crea skeleton SOLO dei cicli chiusi (non dell'intera maschera)
-    # Questo elimina i rametti interni che collegano i cicli
-    mask_bool = mask_closed > 0
-    filled = ndi.binary_fill_holes(mask_bool).astype(np.uint8) * 255
-    cycles_only = cv2.subtract(filled, mask_closed)
+    # STEP A: Calcola skeleton cicli PRIMA del closing
+    print("     4a. Calcolo skeleton cicli PRIMA del closing...")
+    mask_initial_bool = mask_initial > 0
+    filled_before = ndi.binary_fill_holes(mask_initial_bool).astype(np.uint8) * 255
+    cycles_before = cv2.subtract(filled_before, mask_initial)
+    skeleton_before = morphology.skeletonize(cycles_before > 0).astype(np.uint8) * 255
+    n_before = np.sum(skeleton_before > 0)
+    print(f"        Skeleton prima: {n_before:,} pixel")
 
-    # Skeleton solo dei cicli
-    skeleton_cycles = morphology.skeletonize(cycles_only > 0).astype(np.uint8) * 255
+    # STEP B: Calcola skeleton cicli DOPO il closing
+    print("     4b. Calcolo skeleton cicli DOPO il closing...")
+    mask_closed_bool = mask_closed > 0
+    filled_after = ndi.binary_fill_holes(mask_closed_bool).astype(np.uint8) * 255
+    cycles_after = cv2.subtract(filled_after, mask_closed)
+    skeleton_after = morphology.skeletonize(cycles_after > 0).astype(np.uint8) * 255
+    n_after = np.sum(skeleton_after > 0)
+    print(f"        Skeleton dopo: {n_after:,} pixel")
 
-    # Skeleton in blu brillante
-    skeleton_overlay[skeleton_cycles > 0] = [255, 0, 0]  # Blu
+    # STEP C: Calcola differenza (pixel skeleton aggiunti dal closing)
+    print("     4c. Calcolo differenza skeleton (gap chiusi)...")
+    skeleton_gap = cv2.subtract(skeleton_after, skeleton_before)
+    n_gap = np.sum(skeleton_gap > 0)
+    print(f"        Differenza: {n_gap:,} pixel (parti inventate dal closing)")
 
-    # Disegna pallini rossi per i centroidi
+    # STEP D: Crea visualizzazione finale
+    print("     4d. Creazione visualizzazione finale...")
+    final_overlay = fluor_rgb.copy()  # 100% opacità fluorescenza
+
+    # Ispessisci skeleton dopo closing per visibilità (spessore 2-3 pixel)
+    kernel_thick = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    skeleton_after_thick = cv2.dilate(skeleton_after, kernel_thick, iterations=1)
+
+    # Applica skeleton blu
+    final_overlay[skeleton_after_thick > 0] = [255, 0, 0]  # Blu
+
+    # Ispessisci anche i gap per visibilità
+    skeleton_gap_thick = cv2.dilate(skeleton_gap, kernel_thick, iterations=1)
+
+    # Sovrascrivi gap in cyan (mostra dove il closing ha inventato percorsi)
+    final_overlay[skeleton_gap_thick > 0] = [255, 255, 0]  # Cyan
+
+    # Disegna centroidi rossi sopra tutto
     for cy, cx in centroids:
-        cv2.circle(skeleton_overlay, (cx, cy), dot_radius, (0, 0, 255), -1)
+        cv2.circle(final_overlay, (cx, cy), dot_radius, (0, 0, 255), -1)
 
-    cv2.imwrite(str(output_dir / 'step4_skeleton_overlay.png'), skeleton_overlay)
-    n_skeleton_pixels = np.sum(skeleton_cycles > 0)
-    print(f"     Salvato: step4_skeleton_overlay.png (fluorescenza 100%, skeleton cicli blu, {n_skeleton_pixels:,} pixel, NO rametti)")
+    cv2.imwrite(str(output_dir / 'step4_skeleton_overlay.png'), final_overlay)
+    print(f"     Salvato: step4_skeleton_overlay.png")
+    print(f"        - Fluorescenza 100% opacità")
+    print(f"        - Skeleton ispessito blu: {n_after:,} pixel")
+    print(f"        - Gap chiusi cyan: {n_gap:,} pixel")
+    print(f"        - Centroidi rossi: {len(centroids)}")
 
     # === VISUALIZZAZIONI LEGACY (compatibilità) ===
     print("  5. Laminina con centroidi e gap...")
