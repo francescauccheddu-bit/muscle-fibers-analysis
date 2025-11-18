@@ -32,7 +32,7 @@ Uso:
         --output output_final \
         --kernel-size 15 \
         --min-fiber-area 1000 \
-        --dot-radius 5 \
+        --dot-radius 10 \
         --pixel-size 0.41026
 """
 
@@ -265,68 +265,48 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
     centroids = [(int(f['centroid_y']), int(f['centroid_x'])) for f in fibers_data]
 
     # ========================================================================
-    # IMMAGINE 1: Bordi INTERNI laminina PRIMA del morphological closing (SENZA centroidi)
+    # IMMAGINE 1: Bordi delle FIBRE PRIMA del morphological closing (SENZA centroidi)
     # ========================================================================
-    print("  1. Bordi INTERNI laminina PRIMA del closing (senza centroidi)...")
+    print("  1. Bordi delle FIBRE PRIMA del closing (senza centroidi)...")
 
-    # Trova contorni della maschera laminina con gerarchia
-    # RETR_CCOMP restituisce 2 livelli: esterni (0) e interni/buchi (1)
-    contours_lam_before, hierarchy_before = cv2.findContours(mask_initial, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
-
-    # Filtra solo i contorni INTERNI (buchi nella maschera = bordi interni degli anelli)
-    # hierarchy: [Next, Previous, First_Child, Parent]
-    # I contorni interni hanno Parent >= 0
-    inner_contours_before = []
-    if hierarchy_before is not None:
-        hierarchy_before = hierarchy_before[0]  # Rimuovi dimensione extra
-        for idx, h in enumerate(hierarchy_before):
-            if h[3] >= 0:  # Ha un parent -> è un contorno interno
-                inner_contours_before.append(contours_lam_before[idx])
-
-    # Calcola cicli per identificazione later
+    # Calcola cicli (fibre) dalla maschera iniziale
     mask_initial_bool = mask_initial > 0
     filled_before = ndi.binary_fill_holes(mask_initial_bool).astype(np.uint8) * 255
     cycles_before = cv2.subtract(filled_before, mask_initial)
+
+    # Trova contorni ESTERNI dei cicli (fibre)
+    # Questi corrispondono ai bordi interni della laminina, ma senza artefatti
     contours_cycles_before, _ = cv2.findContours(cycles_before, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    print(f"     Trovati {len(inner_contours_before)} bordi interni nella laminina iniziale")
+    print(f"     Trovati {len(contours_cycles_before)} contorni di fibre")
 
-    # Crea immagine: fluorescenza + bordi interni in blu
+    # Crea immagine: fluorescenza + bordi fibre in blu
     before_overlay = fluor_rgb.copy()  # 100% opacità
 
-    # Disegna solo i bordi INTERNI in blu (spessore 2px per visibilità)
-    cv2.drawContours(before_overlay, inner_contours_before, -1, (255, 0, 0), 2)  # Blu
+    # Disegna bordi delle fibre in blu (spessore 2px per visibilità)
+    cv2.drawContours(before_overlay, contours_cycles_before, -1, (255, 0, 0), 2)  # Blu
 
     cv2.imwrite(str(output_dir / 'skeleton_before_closing.png'), before_overlay)
     print(f"     Salvato: skeleton_before_closing.png")
     print(f"        - Fluorescenza 100% opacità")
-    print(f"        - Bordi INTERNI laminina blu: {len(inner_contours_before)} bordi")
+    print(f"        - Bordi fibre blu: {len(contours_cycles_before)} fibre")
     print(f"        - NO centroidi")
-    print(f"        - Solo bordi interni degli anelli, vicini all'immagine originale")
+    print(f"        - Bordi corrispondono ai confini interni laminina")
 
     # ========================================================================
-    # IMMAGINE 2: Bordi INTERNI laminina DOPO del closing + gap cyan + centroidi colorati
+    # IMMAGINE 2: Bordi delle FIBRE DOPO del closing + gap cyan + centroidi colorati
     # ========================================================================
-    print("  2. Bordi INTERNI laminina DOPO del closing + gap + centroidi...")
+    print("  2. Bordi delle FIBRE DOPO del closing + gap + centroidi...")
 
-    # Trova contorni della maschera laminina CHIUSA con gerarchia
-    contours_lam_after, hierarchy_after = cv2.findContours(mask_closed, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
-
-    # Filtra solo i contorni INTERNI (bordi interni degli anelli)
-    inner_contours_after = []
-    if hierarchy_after is not None:
-        hierarchy_after = hierarchy_after[0]
-        for idx, h in enumerate(hierarchy_after):
-            if h[3] >= 0:  # Ha un parent -> è un contorno interno
-                inner_contours_after.append(contours_lam_after[idx])
-
-    # Calcola cicli per identificazione cicli nuovi vs esistenti
+    # Calcola cicli (fibre) dalla maschera chiusa
     mask_closed_bool = mask_closed > 0
     filled_after = ndi.binary_fill_holes(mask_closed_bool).astype(np.uint8) * 255
     cycles_after = cv2.subtract(filled_after, mask_closed)
+
+    # Trova contorni ESTERNI dei cicli (fibre) dopo closing
     contours_cycles_after, _ = cv2.findContours(cycles_after, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    print(f"     Trovati {len(inner_contours_after)} bordi interni dopo closing")
+    print(f"     Trovati {len(contours_cycles_after)} contorni di fibre dopo closing")
 
     # Calcola pixel aggiunti dal closing (gap chiusi)
     pixels_added = cv2.subtract(mask_closed, mask_initial)
@@ -398,10 +378,10 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
             (1 - alpha) * after_overlay[new_cycles_mask > 0]
         ).astype(np.uint8)
 
-    # STEP 3: Disegna bordi INTERNI laminina dopo closing in blu (VA SOPRA tutto)
-    cv2.drawContours(after_overlay, inner_contours_after, -1, (255, 0, 0), 2)  # Blu
+    # STEP 3: Disegna bordi delle fibre dopo closing in blu (VA SOPRA tutto)
+    cv2.drawContours(after_overlay, contours_cycles_after, -1, (255, 0, 0), 2)  # Blu
 
-    # Disegna centroidi con colori diversi
+    # STEP 4: Disegna centroidi con colori diversi (PER ULTIMI, sopra tutto)
     # ROSSO: cicli già esistenti prima del closing
     for fiber in existing_fibers:
         cy, cx = int(fiber['centroid_y']), int(fiber['centroid_x'])
@@ -415,12 +395,12 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
     cv2.imwrite(str(output_dir / 'skeleton_after_closing_with_gaps.png'), after_overlay)
     print(f"     Salvato: skeleton_after_closing_with_gaps.png")
     print(f"        - Fluorescenza 100% opacità")
-    print(f"        - Bordi INTERNI laminina blu: {len(inner_contours_after)} bordi")
+    print(f"        - Bordi fibre blu: {len(contours_cycles_after)} fibre")
     print(f"        - Gap aggiunti cyan: {n_gap:,} pixel")
     print(f"        - Cicli NUOVI riempiti arancione brillante (50% opacità - più visibile)")
     print(f"        - Centroidi ROSSI: {len(existing_fibers)} (cicli già esistenti)")
     print(f"        - Centroidi GIALLI: {len(new_fibers)} (cicli nuovi chiusi dal closing)")
-    print(f"        - Bordi interni vicini all'immagine originale")
+    print(f"        - Bordi corrispondono ai confini delle fibre muscolari")
 
 
 def save_statistics(fibers_data, mask, output_dir, image_shape, pixel_size_um=None):
@@ -602,7 +582,7 @@ Esempi:
       --output output_final \\
       --kernel-size 15 \\
       --min-fiber-area 1000 \\
-      --dot-radius 5
+      --dot-radius 10
 
   # Analisi con calibrazione (pixel + µm²)
   # Per 2.4375 px/µm -> pixel-size = 1/2.4375 = 0.41026 µm
@@ -611,7 +591,7 @@ Esempi:
       --output output_final \\
       --kernel-size 15 \\
       --min-fiber-area 1000 \\
-      --dot-radius 5 \\
+      --dot-radius 10 \\
       --pixel-size 0.41026
         """
     )
@@ -624,8 +604,8 @@ Esempi:
                        help='Dimensione kernel closing (default: 15)')
     parser.add_argument('--min-fiber-area', type=int, default=1000,
                        help='Area minima fibra in pixel² (default: 1000)')
-    parser.add_argument('--dot-radius', type=int, default=5,
-                       help='Raggio pallini centroidi (default: 5)')
+    parser.add_argument('--dot-radius', type=int, default=10,
+                       help='Raggio pallini centroidi (default: 10)')
     parser.add_argument('--block-size', type=int, default=101,
                        help='Block size adaptive threshold (default: 101)')
     parser.add_argument('--threshold-C', type=int, default=2,
