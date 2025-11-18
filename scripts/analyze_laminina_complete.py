@@ -364,12 +364,12 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
                     cv2.drawContours(new_cycles_mask, [contour], -1, 255, -1)  # Riempi
                     break
 
-        # Crea overlay semi-trasparente arancione/salmone chiaro
+        # Crea overlay semi-trasparente arancione/salmone brillante
         overlay_color = np.zeros_like(after_overlay)
-        overlay_color[new_cycles_mask > 0] = [100, 200, 255]  # Arancione/salmone chiaro in BGR
+        overlay_color[new_cycles_mask > 0] = [50, 180, 255]  # Arancione brillante in BGR
 
-        # Mischia con trasparenza 35%
-        alpha = 0.35
+        # Mischia con trasparenza 50% (più visibile)
+        alpha = 0.50
         after_overlay[new_cycles_mask > 0] = (
             alpha * overlay_color[new_cycles_mask > 0] +
             (1 - alpha) * after_overlay[new_cycles_mask > 0]
@@ -394,7 +394,7 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
     print(f"        - Fluorescenza 100% opacità")
     print(f"        - Bordi INTERNI laminina blu: {len(inner_contours_after)} bordi")
     print(f"        - Gap aggiunti cyan: {n_gap:,} pixel")
-    print(f"        - Cicli NUOVI riempiti arancione/salmone chiaro (35% trasparenza)")
+    print(f"        - Cicli NUOVI riempiti arancione brillante (50% opacità - più visibile)")
     print(f"        - Centroidi ROSSI: {len(existing_fibers)} (cicli già esistenti)")
     print(f"        - Centroidi GIALLI: {len(new_fibers)} (cicli nuovi chiusi dal closing)")
     print(f"        - Bordi interni vicini all'immagine originale")
