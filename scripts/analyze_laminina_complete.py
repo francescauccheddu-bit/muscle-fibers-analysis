@@ -10,12 +10,12 @@ STEP 4: Calcolo statistiche ed esportazione
 
 Output:
   === VISUALIZZAZIONI ===
-  - skeleton_before_closing.png               # Contorni CICLI CHIUSI PRIMA del closing (blu) su fluorescenza 100%
-                                               # Solo anelli di laminina, NO rametti interni
+  - skeleton_before_closing.png               # Bordi INTERNI laminina PRIMA del closing (blu) su fluorescenza 100%
+                                               # Solo bordi interni degli anelli, vicini all'immagine originale
                                                # NO centroidi
-  - skeleton_after_closing_with_gaps.png      # Contorni CICLI CHIUSI DOPO del closing (blu) + gap aggiunti (cyan) + centroidi colorati
+  - skeleton_after_closing_with_gaps.png      # Bordi INTERNI laminina DOPO del closing (blu) + gap aggiunti (cyan) + centroidi colorati
                                                # su fluorescenza 100%
-                                               # Solo anelli di laminina chiusi, NO rametti interni
+                                               # Bordi interni vicini all'immagine originale
                                                # Cicli NUOVI: riempiti arancione/salmone chiaro (35% trasparenza)
                                                # Centroidi al centro degli anelli
                                                # Centroidi ROSSI: cicli già esistenti prima del closing
@@ -224,8 +224,8 @@ def create_skeleton(mask):
 def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fibers_data, contours, output_dir, dot_radius=5):
     """
     Crea solo 2 visualizzazioni essenziali:
-    1. Contorni CICLI CHIUSI PRIMA del closing (senza centroidi) - solo anelli, NO rametti
-    2. Contorni CICLI CHIUSI DOPO del closing + gap cyan + centroidi colorati - anelli chiusi con centroidi al centro
+    1. Bordi INTERNI laminina PRIMA del closing (senza centroidi) - bordi interni degli anelli, vicini all'immagine originale
+    2. Bordi INTERNI laminina DOPO del closing + gap cyan + centroidi colorati + riempimento cicli nuovi
     """
     print("\nCreazione visualizzazioni...")
 
@@ -242,45 +242,68 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
     centroids = [(int(f['centroid_y']), int(f['centroid_x'])) for f in fibers_data]
 
     # ========================================================================
-    # IMMAGINE 1: Contorni CICLI CHIUSI PRIMA del morphological closing (SENZA centroidi)
+    # IMMAGINE 1: Bordi INTERNI laminina PRIMA del morphological closing (SENZA centroidi)
     # ========================================================================
-    print("  1. Contorni cicli chiusi PRIMA del closing (senza centroidi)...")
+    print("  1. Bordi INTERNI laminina PRIMA del closing (senza centroidi)...")
 
-    # Calcola cicli PRIMA del closing (per trovare gli anelli di laminina)
+    # Trova contorni della maschera laminina con gerarchia
+    # RETR_CCOMP restituisce 2 livelli: esterni (0) e interni/buchi (1)
+    contours_lam_before, hierarchy_before = cv2.findContours(mask_initial, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Filtra solo i contorni INTERNI (buchi nella maschera = bordi interni degli anelli)
+    # hierarchy: [Next, Previous, First_Child, Parent]
+    # I contorni interni hanno Parent >= 0
+    inner_contours_before = []
+    if hierarchy_before is not None:
+        hierarchy_before = hierarchy_before[0]  # Rimuovi dimensione extra
+        for idx, h in enumerate(hierarchy_before):
+            if h[3] >= 0:  # Ha un parent -> è un contorno interno
+                inner_contours_before.append(contours_lam_before[idx])
+
+    # Calcola cicli per identificazione later
     mask_initial_bool = mask_initial > 0
     filled_before = ndi.binary_fill_holes(mask_initial_bool).astype(np.uint8) * 255
     cycles_before = cv2.subtract(filled_before, mask_initial)
-
-    # Trova contorni dei cicli chiusi (gli anelli di laminina)
     contours_cycles_before, _ = cv2.findContours(cycles_before, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    print(f"     Trovati {len(contours_cycles_before)} cicli chiusi nella laminina iniziale")
 
-    # Crea immagine: fluorescenza + contorni cicli in blu
+    print(f"     Trovati {len(inner_contours_before)} bordi interni nella laminina iniziale")
+
+    # Crea immagine: fluorescenza + bordi interni in blu
     before_overlay = fluor_rgb.copy()  # 100% opacità
 
-    # Disegna solo i contorni dei cicli chiusi in blu (spessore 2px per visibilità)
-    cv2.drawContours(before_overlay, contours_cycles_before, -1, (255, 0, 0), 2)  # Blu
+    # Disegna solo i bordi INTERNI in blu (spessore 2px per visibilità)
+    cv2.drawContours(before_overlay, inner_contours_before, -1, (255, 0, 0), 2)  # Blu
 
     cv2.imwrite(str(output_dir / 'skeleton_before_closing.png'), before_overlay)
     print(f"     Salvato: skeleton_before_closing.png")
     print(f"        - Fluorescenza 100% opacità")
-    print(f"        - Contorni cicli chiusi blu: {len(contours_cycles_before)} anelli")
+    print(f"        - Bordi INTERNI laminina blu: {len(inner_contours_before)} bordi")
     print(f"        - NO centroidi")
-    print(f"        - Solo anelli di laminina, NO rametti interni")
+    print(f"        - Solo bordi interni degli anelli, vicini all'immagine originale")
 
     # ========================================================================
-    # IMMAGINE 2: Contorni CICLI CHIUSI DOPO del closing + gap cyan + centroidi colorati
+    # IMMAGINE 2: Bordi INTERNI laminina DOPO del closing + gap cyan + centroidi colorati
     # ========================================================================
-    print("  2. Contorni cicli chiusi DOPO del closing + gap + centroidi...")
+    print("  2. Bordi INTERNI laminina DOPO del closing + gap + centroidi...")
 
-    # Calcola cicli DOPO il closing (per trovare gli anelli di laminina chiusi)
+    # Trova contorni della maschera laminina CHIUSA con gerarchia
+    contours_lam_after, hierarchy_after = cv2.findContours(mask_closed, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Filtra solo i contorni INTERNI (bordi interni degli anelli)
+    inner_contours_after = []
+    if hierarchy_after is not None:
+        hierarchy_after = hierarchy_after[0]
+        for idx, h in enumerate(hierarchy_after):
+            if h[3] >= 0:  # Ha un parent -> è un contorno interno
+                inner_contours_after.append(contours_lam_after[idx])
+
+    # Calcola cicli per identificazione cicli nuovi vs esistenti
     mask_closed_bool = mask_closed > 0
     filled_after = ndi.binary_fill_holes(mask_closed_bool).astype(np.uint8) * 255
     cycles_after = cv2.subtract(filled_after, mask_closed)
-
-    # Trova contorni dei cicli chiusi dopo closing
     contours_cycles_after, _ = cv2.findContours(cycles_after, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    print(f"     Trovati {len(contours_cycles_after)} cicli chiusi dopo closing")
+
+    print(f"     Trovati {len(inner_contours_after)} bordi interni dopo closing")
 
     # Calcola pixel aggiunti dal closing (gap chiusi)
     pixels_added = cv2.subtract(mask_closed, mask_initial)
@@ -348,8 +371,8 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
             (1 - alpha) * after_overlay[new_cycles_mask > 0]
         ).astype(np.uint8)
 
-    # Disegna contorni cicli chiusi dopo closing in blu
-    cv2.drawContours(after_overlay, contours_cycles_after, -1, (255, 0, 0), 2)  # Blu
+    # Disegna bordi INTERNI laminina dopo closing in blu
+    cv2.drawContours(after_overlay, inner_contours_after, -1, (255, 0, 0), 2)  # Blu
 
     # Sovrascrivi pixel aggiunti (gap chiusi) in cyan
     after_overlay[pixels_added > 0] = [255, 255, 0]  # Cyan
@@ -368,12 +391,12 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
     cv2.imwrite(str(output_dir / 'skeleton_after_closing_with_gaps.png'), after_overlay)
     print(f"     Salvato: skeleton_after_closing_with_gaps.png")
     print(f"        - Fluorescenza 100% opacità")
-    print(f"        - Contorni cicli chiusi blu: {len(contours_cycles_after)} anelli")
+    print(f"        - Bordi INTERNI laminina blu: {len(inner_contours_after)} bordi")
     print(f"        - Gap aggiunti cyan: {n_gap:,} pixel")
     print(f"        - Cicli NUOVI riempiti arancione/salmone chiaro (35% trasparenza)")
     print(f"        - Centroidi ROSSI: {len(existing_fibers)} (cicli già esistenti)")
     print(f"        - Centroidi GIALLI: {len(new_fibers)} (cicli nuovi chiusi dal closing)")
-    print(f"        - Solo anelli di laminina chiusi, NO rametti interni")
+    print(f"        - Bordi interni vicini all'immagine originale")
 
 
 def save_statistics(fibers_data, mask, output_dir, image_shape, pixel_size_um=None):
