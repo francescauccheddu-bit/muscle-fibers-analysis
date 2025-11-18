@@ -202,21 +202,21 @@ def create_closing_visualization(mask_initial, mask_closed, output_dir):
 
     # Crea immagine RGB
     # - Maschera originale: grigio
-    # - Pixel aggiunti: verde brillante
+    # - Pixel aggiunti: blu chiaro (cyan)
     vis = np.zeros((mask_initial.shape[0], mask_initial.shape[1], 3), dtype=np.uint8)
 
     # Maschera originale in grigio
     vis[mask_initial > 0] = [128, 128, 128]
 
-    # Pixel aggiunti in verde brillante
-    vis[pixels_added > 0] = [0, 255, 0]
+    # Pixel aggiunti in blu chiaro (cyan)
+    vis[pixels_added > 0] = [255, 255, 0]  # Cyan in BGR
 
     cv2.imwrite(str(output_dir / 'closing_gaps_visualization.png'), vis)
 
     n_pixels_added = np.sum(pixels_added > 0)
     print(f"  Salvato: closing_gaps_visualization.png")
     print(f"  - Maschera originale: grigio")
-    print(f"  - Pixel aggiunti ({n_pixels_added:,}): verde")
+    print(f"  - Pixel aggiunti ({n_pixels_added:,}): blu chiaro (cyan)")
 
 
 def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fibers_data, contours, output_dir, dot_radius=5):
