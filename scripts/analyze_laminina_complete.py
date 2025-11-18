@@ -12,6 +12,7 @@ Output:
   - laminina_with_centroids.png       # Immagine originale + pallini rossi
   - skeleton_with_centroids.png       # Skeleton + pallini rossi
   - area_distribution.png             # Istogramma aree
+  - closing_gaps_visualization.png    # Visualizzazione gap chiusi (NUOVO!)
   - fibers_statistics.csv             # Statistiche per ogni fibra
   - summary_statistics.csv            # Statistiche sommarie
   - metadata.json                     # Metadati analisi
@@ -22,7 +23,8 @@ Uso:
         --output output_final \
         --kernel-size 15 \
         --min-fiber-area 1000 \
-        --dot-radius 5
+        --dot-radius 5 \
+        --pixel-size 0.41026
 """
 
 import argparse
