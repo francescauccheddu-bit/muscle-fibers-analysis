@@ -126,6 +126,7 @@ def identify_closed_cycles(mask, min_area=1000, exclude_largest=True):
 
     # Analizza ogni contorno
     fibers_data = []
+    valid_contours = []  # Salva solo i contorni validi
 
     for idx, contour in enumerate(contours):
         area = cv2.contourArea(contour)
@@ -174,13 +175,17 @@ def identify_closed_cycles(mask, min_area=1000, exclude_largest=True):
             'bbox_width': w,
             'bbox_height': h,
         })
+        valid_contours.append(contour)
 
-    # Ordina per area decrescente
-    fibers_data.sort(key=lambda x: x['area_px'], reverse=True)
+    # Ordina per area decrescente (e riordina contorni di conseguenza)
+    sorted_indices = sorted(range(len(fibers_data)), key=lambda i: fibers_data[i]['area_px'], reverse=True)
+    fibers_data = [fibers_data[i] for i in sorted_indices]
+    valid_contours = [valid_contours[i] for i in sorted_indices]
 
     # Escludi la più grande se richiesto (background)
     if exclude_largest and len(fibers_data) > 0:
         largest = fibers_data.pop(0)
+        valid_contours.pop(0)  # Rimuovi anche il contorno corrispondente
         print(f"    Escluso ciclo più grande: {largest['area_px']:.0f} px² (background)")
 
     # Rinumera dopo esclusione
@@ -189,7 +194,7 @@ def identify_closed_cycles(mask, min_area=1000, exclude_largest=True):
 
     print(f"    Fibre valide identificate: {len(fibers_data)}")
 
-    return fibers_data, contours
+    return fibers_data, valid_contours
 
 
 def create_skeleton(mask):
@@ -254,68 +259,59 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
     seg_overlay = fluor_rgb.copy()
     seg_overlay = (seg_overlay * 0.5).astype(np.uint8)  # 50% trasparenza
 
-    # Trova e disegna SOLO i contorni della segmentazione iniziale
-    contours_initial, _ = cv2.findContours(mask_initial, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    cv2.drawContours(seg_overlay, contours_initial, -1, (255, 0, 255), 2)  # Magenta spessore 2
+    # Overlay della maschera iniziale in magenta semi-trasparente
+    seg_overlay[mask_initial > 0] = (seg_overlay[mask_initial > 0] * 0.6 + np.array([128, 0, 128]) * 0.4).astype(np.uint8)
 
     cv2.imwrite(str(output_dir / 'step1_segmentation_overlay.png'), seg_overlay)
-    print(f"     Salvato: step1_segmentation_overlay.png (contorni magenta = {len(contours_initial)} oggetti)")
+    n_pixels_initial = np.sum(mask_initial > 0)
+    print(f"     Salvato: step1_segmentation_overlay.png (magenta = {n_pixels_initial:,} pixel segmentati)")
 
     # === FASE 2: Morphological Closing ===
     print("  2. Morphological closing overlay...")
     closing_overlay = fluor_rgb.copy()
     closing_overlay = (closing_overlay * 0.5).astype(np.uint8)  # 50% trasparenza
 
-    # Trova e disegna SOLO i contorni della maschera chiusa in arancione
-    contours_closed, _ = cv2.findContours(mask_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    cv2.drawContours(closing_overlay, contours_closed, -1, (0, 165, 255), 2)  # Arancione spessore 2
+    # Overlay della maschera chiusa in arancione semi-trasparente
+    closing_overlay[mask_closed > 0] = (closing_overlay[mask_closed > 0] * 0.6 + np.array([0, 140, 255]) * 0.4).astype(np.uint8)
+
+    # Evidenzia gap aggiunti in cyan brillante
+    closing_overlay[pixels_added > 0] = [255, 255, 0]  # Cyan
 
     cv2.imwrite(str(output_dir / 'step2_closing_overlay.png'), closing_overlay)
-    print(f"     Salvato: step2_closing_overlay.png (contorni arancioni = {len(contours_closed)} oggetti)")
+    n_pixels_closed = np.sum(mask_closed > 0)
+    print(f"     Salvato: step2_closing_overlay.png (arancione = {n_pixels_closed:,} pixel, cyan = gap)")
 
     # === FASE 3: Cicli Chiusi (solo quelli validi con centroidi) ===
     print("  3. Cicli chiusi overlay con contorni blu...")
 
-    # Calcola i cicli chiusi (filled - mask)
-    mask_bool = mask_closed > 0
-    filled = ndi.binary_fill_holes(mask_bool).astype(np.uint8) * 255
-    cycles = cv2.subtract(filled, mask_closed)
-
-    # Trova contorni dei cicli
-    cycles_contours, _ = cv2.findContours(cycles, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
     # Crea maschera solo per i cicli validi (quelli in fibers_data)
-    valid_cycles_mask = np.zeros_like(cycles)
-
+    # Nota: contours passato come parametro contiene GIÀ i contorni validi in ordine corrispondente a fibers_data
     cycles_overlay = fluor_rgb.copy()
     cycles_overlay = (cycles_overlay * 0.5).astype(np.uint8)  # 50% trasparenza
 
-    # Traccia quali fibre hanno trovato un contorno corrispondente
-    matched_fibers = []
+    # Crea maschera per cicli validi
+    mask_bool = mask_closed > 0
+    filled = ndi.binary_fill_holes(mask_bool).astype(np.uint8) * 255
+    cycles = cv2.subtract(filled, mask_closed)
+    valid_cycles_mask = np.zeros_like(cycles)
 
-    # Per ogni fibra in fibers_data, trova il contorno corrispondente
-    for fiber in fibers_data:
+    # Usa i contorni validi passati (già in ordine 1:1 con fibers_data)
+    if len(contours) != len(fibers_data):
+        print(f"       ⚠️  ATTENZIONE: {len(contours)} contorni ma {len(fibers_data)} fibre!")
+        print(f"                    Dovrebbero essere uguali. Qualcosa non va.")
+
+    # Disegna ESATTAMENTE len(fibers_data) contorni e centroidi
+    for i, (fiber, contour) in enumerate(zip(fibers_data, contours)):
+        # Disegna contorno blu
+        cv2.drawContours(cycles_overlay, [contour], -1, (255, 0, 0), 2)  # Blu spessore 2
+        cv2.drawContours(valid_cycles_mask, [contour], -1, 255, -1)
+
+        # Disegna centroide rosso
         cx, cy = int(fiber['centroid_x']), int(fiber['centroid_y'])
-        # Trova quale contorno contiene questo centroide
-        matched = False
-        for contour in cycles_contours:
-            if cv2.pointPolygonTest(contour, (cx, cy), False) >= 0:
-                # Disegna contorno blu
-                cv2.drawContours(cycles_overlay, [contour], -1, (255, 0, 0), 2)  # Blu spessore 2
-                cv2.drawContours(valid_cycles_mask, [contour], -1, 255, -1)
-                matched_fibers.append((cy, cx))  # Salva centroide matched
-                matched = True
-                break
-
-        if not matched:
-            print(f"       ⚠️  Fibra {fiber['fiber_id']} centroide ({cx},{cy}) senza contorno corrispondente!")
-
-    # Disegna SOLO i pallini rossi per i centroidi matched
-    for cy, cx in matched_fibers:
         cv2.circle(cycles_overlay, (cx, cy), dot_radius, (0, 0, 255), -1)
 
     cv2.imwrite(str(output_dir / 'step3_cycles_overlay.png'), cycles_overlay)
-    print(f"     Salvato: step3_cycles_overlay.png ({len(matched_fibers)} contorni blu + centroidi rossi)")
+    print(f"     Salvato: step3_cycles_overlay.png ({len(fibers_data)} contorni blu + centroidi rossi 1:1)")
 
     # === FASE 4: Skeletonizzazione ===
     print("  4. Skeleton overlay con profili blu...")
