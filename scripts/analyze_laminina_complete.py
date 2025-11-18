@@ -10,10 +10,13 @@ STEP 4: Calcolo statistiche ed esportazione
 
 Output:
   === VISUALIZZAZIONI ===
-  - skeleton_before_closing.png               # Skeleton cicli PRIMA del closing (blu) su fluorescenza 100%
-                                               # NO centroidi, NO rametti
-  - skeleton_after_closing_with_gaps.png      # Skeleton cicli DOPO del closing (blu) + gap aggiunti (cyan) + centroidi colorati
+  - skeleton_before_closing.png               # Skeleton LAMININA PRIMA del closing (blu) su fluorescenza 100%
+                                               # Skeleton vicino ai bordi della laminina visibile
+                                               # NO centroidi
+  - skeleton_after_closing_with_gaps.png      # Skeleton LAMININA DOPO del closing (blu) + gap aggiunti (cyan) + centroidi colorati
                                                # su fluorescenza 100%
+                                               # Skeleton forma anelli chiusi vicino ai bordi della laminina
+                                               # Centroidi al centro degli anelli
                                                # Centroidi ROSSI: cicli già esistenti prima del closing
                                                # Centroidi VERDI: cicli NUOVI chiusi dal morphological closing
 
@@ -220,8 +223,8 @@ def create_skeleton(mask):
 def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fibers_data, contours, output_dir, dot_radius=5):
     """
     Crea solo 2 visualizzazioni essenziali:
-    1. Skeleton PRIMA del closing (senza centroidi)
-    2. Skeleton DOPO del closing + gap cyan + centroidi rossi
+    1. Skeleton LAMININA PRIMA del closing (senza centroidi) - vicino ai bordi visibili
+    2. Skeleton LAMININA DOPO del closing + gap cyan + centroidi colorati - forma anelli chiusi con centroidi al centro
     """
     print("\nCreazione visualizzazioni...")
 
@@ -238,23 +241,20 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
     centroids = [(int(f['centroid_y']), int(f['centroid_x'])) for f in fibers_data]
 
     # ========================================================================
-    # IMMAGINE 1: Skeleton PRIMA del morphological closing (SENZA centroidi)
+    # IMMAGINE 1: Skeleton LAMININA PRIMA del morphological closing (SENZA centroidi)
     # ========================================================================
-    print("  1. Skeleton cicli PRIMA del closing (senza centroidi)...")
+    print("  1. Skeleton laminina PRIMA del closing (senza centroidi)...")
 
-    # Calcola skeleton cicli prima del closing
-    mask_initial_bool = mask_initial > 0
-    filled_before = ndi.binary_fill_holes(mask_initial_bool).astype(np.uint8) * 255
-    cycles_before = cv2.subtract(filled_before, mask_initial)
-    skeleton_before = morphology.skeletonize(cycles_before > 0).astype(np.uint8) * 255
-    n_before = np.sum(skeleton_before > 0)
+    # Calcola skeleton della LAMININA (mask_initial) - non dei cicli interni
+    skeleton_laminina_before = morphology.skeletonize(mask_initial > 0).astype(np.uint8) * 255
+    n_before = np.sum(skeleton_laminina_before > 0)
 
     # Crea immagine: fluorescenza + skeleton blu
     before_overlay = fluor_rgb.copy()  # 100% opacità
 
     # Ispessisci skeleton per visibilità
     kernel_thick = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    skeleton_before_thick = cv2.dilate(skeleton_before, kernel_thick, iterations=1)
+    skeleton_before_thick = cv2.dilate(skeleton_laminina_before, kernel_thick, iterations=1)
 
     # Applica skeleton blu
     before_overlay[skeleton_before_thick > 0] = [255, 0, 0]  # Blu
@@ -262,27 +262,29 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
     cv2.imwrite(str(output_dir / 'skeleton_before_closing.png'), before_overlay)
     print(f"     Salvato: skeleton_before_closing.png")
     print(f"        - Fluorescenza 100% opacità")
-    print(f"        - Skeleton cicli iniziale blu: {n_before:,} pixel")
+    print(f"        - Skeleton laminina iniziale blu: {n_before:,} pixel")
     print(f"        - NO centroidi")
+    print(f"        - Skeleton vicino ai bordi della laminina visibile")
 
     # ========================================================================
-    # IMMAGINE 2: Skeleton DOPO del closing + gap cyan + centroidi colorati
+    # IMMAGINE 2: Skeleton LAMININA DOPO del closing + gap cyan + centroidi colorati
     # ========================================================================
-    print("  2. Skeleton cicli DOPO del closing + gap + centroidi...")
+    print("  2. Skeleton laminina DOPO del closing + gap + centroidi...")
 
-    # Calcola skeleton cicli dopo il closing
-    mask_closed_bool = mask_closed > 0
-    filled_after = ndi.binary_fill_holes(mask_closed_bool).astype(np.uint8) * 255
-    cycles_after = cv2.subtract(filled_after, mask_closed)
-    skeleton_after = morphology.skeletonize(cycles_after > 0).astype(np.uint8) * 255
-    n_after = np.sum(skeleton_after > 0)
+    # Calcola skeleton della LAMININA CHIUSA (mask_closed) - non dei cicli interni
+    skeleton_laminina_after = morphology.skeletonize(mask_closed > 0).astype(np.uint8) * 255
+    n_after = np.sum(skeleton_laminina_after > 0)
 
-    # Calcola differenza (pixel skeleton aggiunti dal closing)
-    skeleton_gap = cv2.subtract(skeleton_after, skeleton_before)
+    # Calcola differenza (pixel skeleton aggiunti dal closing sulla laminina)
+    skeleton_gap = cv2.subtract(skeleton_laminina_after, skeleton_laminina_before)
     n_gap = np.sum(skeleton_gap > 0)
 
     # Identifica cicli PRIMA del closing per distinguere nuovi vs esistenti
+    # Usa cicli interni per identificare dove sono i centroidi
     print("     Identificazione cicli nuovi vs esistenti...")
+    mask_initial_bool = mask_initial > 0
+    filled_before = ndi.binary_fill_holes(mask_initial_bool).astype(np.uint8) * 255
+    cycles_before = cv2.subtract(filled_before, mask_initial)
     contours_before, _ = cv2.findContours(cycles_before, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     # Per ogni fibra (dopo closing), verifica se il centroide cade in un ciclo che esisteva prima
@@ -312,8 +314,8 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
     # Crea immagine: fluorescenza + skeleton blu + gap cyan + centroidi colorati
     after_overlay = fluor_rgb.copy()  # 100% opacità
 
-    # Ispessisci skeleton dopo closing
-    skeleton_after_thick = cv2.dilate(skeleton_after, kernel_thick, iterations=1)
+    # Ispessisci skeleton laminina dopo closing
+    skeleton_after_thick = cv2.dilate(skeleton_laminina_after, kernel_thick, iterations=1)
 
     # Applica skeleton blu
     after_overlay[skeleton_after_thick > 0] = [255, 0, 0]  # Blu
@@ -321,7 +323,7 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
     # Ispessisci gap per visibilità
     skeleton_gap_thick = cv2.dilate(skeleton_gap, kernel_thick, iterations=1)
 
-    # Sovrascrivi gap in cyan (mostra dove il closing ha aggiunto percorsi)
+    # Sovrascrivi gap in cyan (mostra dove il closing ha aggiunto percorsi sulla laminina)
     after_overlay[skeleton_gap_thick > 0] = [255, 255, 0]  # Cyan
 
     # Disegna centroidi con colori diversi
@@ -338,10 +340,11 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
     cv2.imwrite(str(output_dir / 'skeleton_after_closing_with_gaps.png'), after_overlay)
     print(f"     Salvato: skeleton_after_closing_with_gaps.png")
     print(f"        - Fluorescenza 100% opacità")
-    print(f"        - Skeleton cicli finale blu: {n_after:,} pixel")
+    print(f"        - Skeleton laminina finale blu: {n_after:,} pixel (forma cicli chiusi)")
     print(f"        - Gap aggiunti cyan: {n_gap:,} pixel")
     print(f"        - Centroidi ROSSI: {len(existing_fibers)} (cicli già esistenti)")
     print(f"        - Centroidi VERDI: {len(new_fibers)} (cicli nuovi chiusi dal closing)")
+    print(f"        - Skeleton vicino ai bordi della laminina, forma anelli chiusi con centroidi al centro")
 
 
 def save_statistics(fibers_data, mask, output_dir, image_shape, pixel_size_um=None):
