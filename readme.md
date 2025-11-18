@@ -79,6 +79,45 @@ output_final/
 - `--kernel-size 15`: dimensione closing (raccomandato 15)
 - `--min-fiber-area 1000`: area minima fibra (filtra rumore)
 - `--dot-radius 5`: raggio pallini (3-10)
+- `--pixel-size 0.41026`: calibrazione µm/pixel (opzionale, per output in µm²)
+
+---
+
+### 🔬 Confronto Analisi Multiple (NUOVO!)
+
+**Script**: `scripts/compare_analyses.py`
+
+**Confronta risultati di multiple analisi** (es. vecchia vs nuova immagine, diversi campioni):
+1. Carica risultati da multiple directory di output
+2. Genera report comparativo markdown dettagliato
+3. Crea visualizzazioni (istogrammi, boxplot, grafici a barre)
+4. Esporta CSV comparativo
+
+**Uso rapido**:
+```bash
+python scripts/compare_analyses.py \
+  --analyses output_final output_nuova_immagine \
+  --labels "Vecchia Immagine" "Nuova Immagine" \
+  --output comparison_report
+```
+
+**Output**:
+```
+comparison_report/
+  ├── COMPARISON_REPORT.md                  # Report dettagliato
+  ├── comparison_summary.csv                # Tabella comparativa
+  ├── comparison_area_distributions.png     # Istogrammi sovrapposti
+  ├── comparison_boxplot.png                # Box plot comparativo
+  └── comparison_metrics.png                # Metriche principali
+```
+
+**Funzionalità**:
+- Confronta numero fibre, aree, coverage
+- Calcola variazioni percentuali
+- Identifica automaticamente se sono campioni diversi o stesso tessuto
+- Supporta calibrazione µm² se presente nei dati
+
+📚 **Documentazione completa**: Vedi `WORKFLOW_NUOVE_IMMAGINI.md` e `NEXT_STEPS.md`
 
 ---
 
