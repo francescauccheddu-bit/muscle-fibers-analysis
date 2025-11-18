@@ -95,6 +95,11 @@ def segment_adaptive_threshold(image, block_size=101, C=2):
 def apply_morphological_closing(mask, kernel_size=15):
     """
     Applica morphological closing per chiudere gap.
+
+    NOTA: Il closing riempie i gap con forme ellittiche. Per gap molto grandi (>15 px),
+    la forma chiusa può non corrispondere alla forma biologica originale (il closing "inventa"
+    una chiusura geometrica, non biologica). Questo è normale e intrinseco all'algoritmo.
+    Ridurre --kernel-size se si vuole maggiore fedeltà alla forma originale (ma più gap aperti).
     """
     print(f"  Kernel: {kernel_size}×{kernel_size} ellittico")
 
@@ -259,27 +264,27 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
     seg_overlay = fluor_rgb.copy()
     seg_overlay = (seg_overlay * 0.5).astype(np.uint8)  # 50% trasparenza
 
-    # Overlay della maschera iniziale in magenta semi-trasparente
-    seg_overlay[mask_initial > 0] = (seg_overlay[mask_initial > 0] * 0.6 + np.array([128, 0, 128]) * 0.4).astype(np.uint8)
+    # Trova e disegna SOLO i contorni ESTERNI della segmentazione iniziale
+    contours_initial, _ = cv2.findContours(mask_initial, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cv2.drawContours(seg_overlay, contours_initial, -1, (255, 0, 255), 3)  # Magenta spessore 3
 
     cv2.imwrite(str(output_dir / 'step1_segmentation_overlay.png'), seg_overlay)
-    n_pixels_initial = np.sum(mask_initial > 0)
-    print(f"     Salvato: step1_segmentation_overlay.png (magenta = {n_pixels_initial:,} pixel segmentati)")
+    print(f"     Salvato: step1_segmentation_overlay.png (contorni magenta, {len(contours_initial)} componenti)")
 
     # === FASE 2: Morphological Closing ===
     print("  2. Morphological closing overlay...")
     closing_overlay = fluor_rgb.copy()
     closing_overlay = (closing_overlay * 0.5).astype(np.uint8)  # 50% trasparenza
 
-    # Overlay della maschera chiusa in arancione semi-trasparente
-    closing_overlay[mask_closed > 0] = (closing_overlay[mask_closed > 0] * 0.6 + np.array([0, 140, 255]) * 0.4).astype(np.uint8)
+    # Trova e disegna SOLO i contorni ESTERNI della maschera chiusa
+    contours_closed, _ = cv2.findContours(mask_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cv2.drawContours(closing_overlay, contours_closed, -1, (0, 165, 255), 3)  # Arancione spessore 3
 
     # Evidenzia gap aggiunti in cyan brillante
     closing_overlay[pixels_added > 0] = [255, 255, 0]  # Cyan
 
     cv2.imwrite(str(output_dir / 'step2_closing_overlay.png'), closing_overlay)
-    n_pixels_closed = np.sum(mask_closed > 0)
-    print(f"     Salvato: step2_closing_overlay.png (arancione = {n_pixels_closed:,} pixel, cyan = gap)")
+    print(f"     Salvato: step2_closing_overlay.png (contorni arancioni, cyan = gap, {len(contours_closed)} componenti)")
 
     # === FASE 3: Cicli Chiusi (solo quelli validi con centroidi) ===
     print("  3. Cicli chiusi overlay con contorni blu...")
@@ -314,9 +319,9 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
     print(f"     Salvato: step3_cycles_overlay.png ({len(fibers_data)} contorni blu + centroidi rossi 1:1)")
 
     # === FASE 4: Skeletonizzazione ===
-    print("  4. Skeleton overlay con profili blu...")
-    skeleton_overlay = fluor_rgb.copy()
-    skeleton_overlay = (skeleton_overlay * 0.5).astype(np.uint8)  # 50% trasparenza
+    print("  4. Skeleton su sfondo nero...")
+    # Crea immagine NERA (no fluorescenza trasparente)
+    skeleton_overlay = np.zeros_like(fluor_rgb)
 
     # Skeleton in blu brillante
     skeleton_overlay[skeleton > 0] = [255, 0, 0]  # Blu
@@ -326,7 +331,8 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
         cv2.circle(skeleton_overlay, (cx, cy), dot_radius, (0, 0, 255), -1)
 
     cv2.imwrite(str(output_dir / 'step4_skeleton_overlay.png'), skeleton_overlay)
-    print(f"     Salvato: step4_skeleton_overlay.png (blu = skeleton, rosso = centroidi)")
+    n_skeleton_pixels = np.sum(skeleton > 0)
+    print(f"     Salvato: step4_skeleton_overlay.png (sfondo NERO, skeleton blu, {n_skeleton_pixels:,} pixel)")
 
     # === VISUALIZZAZIONI LEGACY (compatibilità) ===
     print("  5. Laminina con centroidi e gap...")
