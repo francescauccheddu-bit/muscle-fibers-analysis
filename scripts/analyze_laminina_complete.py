@@ -9,17 +9,11 @@ STEP 3: Identificazione cicli chiusi
 STEP 4: Calcolo statistiche ed esportazione
 
 Output:
-  === VISUALIZZAZIONI FASI (con overlay trasparente) ===
-  - step1_segmentation_overlay.png    # Contorni MAGENTA segmentazione iniziale su fluorescenza 50% trasparente
-  - step2_closing_overlay.png         # Contorni ARANCIONI dopo closing su fluorescenza trasparente
-  - step3_cycles_overlay.png          # Contorni BLU cicli chiusi + centroidi ROSSI (1:1) su trasparente
-  - step4_skeleton_overlay.png        # Skeleton blu + centroidi rossi su trasparente
-
-  === VISUALIZZAZIONI FINALI ===
-  - laminina_with_centroids.png       # Fluorescenza + gap cyan + centroidi rossi
-  - skeleton_with_centroids.png       # Cicli chiusi bianchi + gap cyan + centroidi rossi
-  - closing_gaps_visualization.png    # Gap in cyan su maschera grigia
-  - area_distribution.png             # Istogramma distribuzione aree
+  === VISUALIZZAZIONI ===
+  - skeleton_before_closing.png               # Skeleton cicli PRIMA del closing (blu) su fluorescenza 100%
+                                               # NO centroidi, NO rametti
+  - skeleton_after_closing_with_gaps.png      # Skeleton cicli DOPO del closing (blu) + gap aggiunti (cyan) + centroidi (rossi)
+                                               # su fluorescenza 100%
 
   === DATI ===
   - fibers_statistics.csv             # Statistiche per ogni fibra
@@ -219,44 +213,17 @@ def create_skeleton(mask):
     return skeleton
 
 
-def create_closing_visualization(mask_initial, mask_closed, output_dir):
-    """
-    Visualizza i pixel aggiunti dal morphological closing.
-    """
-    print("\nCreazione visualizzazione closing...")
-
-    # Calcola pixel aggiunti
-    pixels_added = cv2.subtract(mask_closed, mask_initial)
-
-    # Crea immagine RGB
-    # - Maschera originale: grigio
-    # - Pixel aggiunti: blu chiaro (cyan)
-    vis = np.zeros((mask_initial.shape[0], mask_initial.shape[1], 3), dtype=np.uint8)
-
-    # Maschera originale in grigio
-    vis[mask_initial > 0] = [128, 128, 128]
-
-    # Pixel aggiunti in blu chiaro (cyan)
-    vis[pixels_added > 0] = [255, 255, 0]  # Cyan in BGR
-
-    cv2.imwrite(str(output_dir / 'closing_gaps_visualization.png'), vis)
-
-    n_pixels_added = np.sum(pixels_added > 0)
-    print(f"  Salvato: closing_gaps_visualization.png")
-    print(f"  - Maschera originale: grigio")
-    print(f"  - Pixel aggiunti ({n_pixels_added:,}): blu chiaro (cyan)")
 
 
 def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fibers_data, contours, output_dir, dot_radius=5):
     """
-    Crea tutte le visualizzazioni.
+    Crea solo 2 visualizzazioni essenziali:
+    1. Skeleton PRIMA del closing (senza centroidi)
+    2. Skeleton DOPO del closing + gap cyan + centroidi rossi
     """
     print("\nCreazione visualizzazioni...")
 
-    # Calcola pixel aggiunti (gap chiusi)
-    pixels_added = cv2.subtract(mask_closed, mask_initial)
-
-    # Prepara immagine base trasparente
+    # Prepara immagine base
     if len(fluorescence.shape) == 2:
         fluor_rgb = cv2.cvtColor(fluorescence, cv2.COLOR_GRAY2RGB)
     else:
@@ -265,180 +232,78 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
     if fluor_rgb.dtype == np.uint16:
         fluor_rgb = (fluor_rgb / 256).astype(np.uint8)
 
-    # Prepara dati
+    # Prepara centroidi
     centroids = [(int(f['centroid_y']), int(f['centroid_x'])) for f in fibers_data]
 
-    # === FASE 1: Segmentazione Iniziale ===
-    print("  1. Segmentazione iniziale overlay...")
-    seg_overlay = fluor_rgb.copy()
-    seg_overlay = (seg_overlay * 0.5).astype(np.uint8)  # 50% trasparenza
+    # ========================================================================
+    # IMMAGINE 1: Skeleton PRIMA del morphological closing (SENZA centroidi)
+    # ========================================================================
+    print("  1. Skeleton cicli PRIMA del closing (senza centroidi)...")
 
-    # Sovrapponi maschera in magenta semi-trasparente
-    seg_overlay[mask_initial > 0] = [200, 0, 200]  # Magenta brillante
-
-    cv2.imwrite(str(output_dir / 'step1_segmentation_overlay.png'), seg_overlay)
-    n_pixels_seg = np.sum(mask_initial > 0)
-    print(f"     Salvato: step1_segmentation_overlay.png (maschera magenta, {n_pixels_seg:,} pixel)")
-
-    # === FASE 2: Morphological Closing ===
-    print("  2. Morphological closing overlay...")
-    closing_overlay = fluor_rgb.copy()
-    closing_overlay = (closing_overlay * 0.5).astype(np.uint8)  # 50% trasparenza
-
-    # Sovrapponi maschera chiusa in arancione
-    closing_overlay[mask_closed > 0] = [0, 140, 255]  # Arancione
-
-    # Calcola i gap chiusi: pixel aggiunti che NON sono interni ai cicli
-    # Identifichiamo i gap reali usando erosione
-    kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    mask_closed_eroded = cv2.erode(mask_closed, kernel_small, iterations=2)
-    gap_pixels = pixels_added & (mask_closed_eroded == 0)  # Solo pixel vicini ai bordi
-
-    # Evidenzia solo i gap sui bordi in cyan brillante
-    closing_overlay[gap_pixels > 0] = [255, 255, 0]  # Cyan
-
-    cv2.imwrite(str(output_dir / 'step2_closing_overlay.png'), closing_overlay)
-    n_gap_pixels = np.sum(gap_pixels > 0)
-    print(f"     Salvato: step2_closing_overlay.png (maschera arancione + gap cyan sui bordi, {n_gap_pixels:,} pixel cyan)")
-
-    # === FASE 3: Cicli Chiusi (solo quelli validi con centroidi) ===
-    print("  3. Cicli chiusi overlay con contorni blu...")
-
-    # Crea maschera solo per i cicli validi (quelli in fibers_data)
-    # Nota: contours passato come parametro contiene GIÀ i contorni validi in ordine corrispondente a fibers_data
-    cycles_overlay = fluor_rgb.copy()
-    cycles_overlay = (cycles_overlay * 0.5).astype(np.uint8)  # 50% trasparenza
-
-    # Crea maschera per cicli validi
-    mask_bool = mask_closed > 0
-    filled = ndi.binary_fill_holes(mask_bool).astype(np.uint8) * 255
-    cycles = cv2.subtract(filled, mask_closed)
-    valid_cycles_mask = np.zeros_like(cycles)
-
-    # Usa i contorni validi passati (già in ordine 1:1 con fibers_data)
-    if len(contours) != len(fibers_data):
-        print(f"       ⚠️  ATTENZIONE: {len(contours)} contorni ma {len(fibers_data)} fibre!")
-        print(f"                    Dovrebbero essere uguali. Qualcosa non va.")
-
-    # Disegna ESATTAMENTE len(fibers_data) contorni e centroidi
-    for i, (fiber, contour) in enumerate(zip(fibers_data, contours)):
-        # Disegna contorno blu
-        cv2.drawContours(cycles_overlay, [contour], -1, (255, 0, 0), 2)  # Blu spessore 2
-        cv2.drawContours(valid_cycles_mask, [contour], -1, 255, -1)
-
-        # Disegna centroide rosso
-        cx, cy = int(fiber['centroid_x']), int(fiber['centroid_y'])
-        cv2.circle(cycles_overlay, (cx, cy), dot_radius, (0, 0, 255), -1)
-
-    cv2.imwrite(str(output_dir / 'step3_cycles_overlay.png'), cycles_overlay)
-    print(f"     Salvato: step3_cycles_overlay.png ({len(fibers_data)} contorni blu + centroidi rossi 1:1)")
-
-    # === FASE 4: Skeletonizzazione con differenza gap (NUOVA LOGICA) ===
-    print("  4. Skeleton overlay con differenza gap...")
-
-    # STEP A: Calcola skeleton cicli PRIMA del closing
-    print("     4a. Calcolo skeleton cicli PRIMA del closing...")
+    # Calcola skeleton cicli prima del closing
     mask_initial_bool = mask_initial > 0
     filled_before = ndi.binary_fill_holes(mask_initial_bool).astype(np.uint8) * 255
     cycles_before = cv2.subtract(filled_before, mask_initial)
     skeleton_before = morphology.skeletonize(cycles_before > 0).astype(np.uint8) * 255
     n_before = np.sum(skeleton_before > 0)
-    print(f"        Skeleton prima: {n_before:,} pixel")
 
-    # STEP B: Calcola skeleton cicli DOPO il closing
-    print("     4b. Calcolo skeleton cicli DOPO il closing...")
+    # Crea immagine: fluorescenza + skeleton blu
+    before_overlay = fluor_rgb.copy()  # 100% opacità
+
+    # Ispessisci skeleton per visibilità
+    kernel_thick = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    skeleton_before_thick = cv2.dilate(skeleton_before, kernel_thick, iterations=1)
+
+    # Applica skeleton blu
+    before_overlay[skeleton_before_thick > 0] = [255, 0, 0]  # Blu
+
+    cv2.imwrite(str(output_dir / 'skeleton_before_closing.png'), before_overlay)
+    print(f"     Salvato: skeleton_before_closing.png")
+    print(f"        - Fluorescenza 100% opacità")
+    print(f"        - Skeleton cicli iniziale blu: {n_before:,} pixel")
+    print(f"        - NO centroidi")
+
+    # ========================================================================
+    # IMMAGINE 2: Skeleton DOPO del closing + gap cyan + centroidi rossi
+    # ========================================================================
+    print("  2. Skeleton cicli DOPO del closing + gap + centroidi...")
+
+    # Calcola skeleton cicli dopo il closing
     mask_closed_bool = mask_closed > 0
     filled_after = ndi.binary_fill_holes(mask_closed_bool).astype(np.uint8) * 255
     cycles_after = cv2.subtract(filled_after, mask_closed)
     skeleton_after = morphology.skeletonize(cycles_after > 0).astype(np.uint8) * 255
     n_after = np.sum(skeleton_after > 0)
-    print(f"        Skeleton dopo: {n_after:,} pixel")
 
-    # STEP C: Calcola differenza (pixel skeleton aggiunti dal closing)
-    print("     4c. Calcolo differenza skeleton (gap chiusi)...")
+    # Calcola differenza (pixel skeleton aggiunti dal closing)
     skeleton_gap = cv2.subtract(skeleton_after, skeleton_before)
     n_gap = np.sum(skeleton_gap > 0)
-    print(f"        Differenza: {n_gap:,} pixel (parti inventate dal closing)")
 
-    # STEP D: Crea visualizzazione finale
-    print("     4d. Creazione visualizzazione finale...")
-    final_overlay = fluor_rgb.copy()  # 100% opacità fluorescenza
+    # Crea immagine: fluorescenza + skeleton blu + gap cyan + centroidi rossi
+    after_overlay = fluor_rgb.copy()  # 100% opacità
 
-    # Ispessisci skeleton dopo closing per visibilità (spessore 2-3 pixel)
-    kernel_thick = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    # Ispessisci skeleton dopo closing
     skeleton_after_thick = cv2.dilate(skeleton_after, kernel_thick, iterations=1)
 
     # Applica skeleton blu
-    final_overlay[skeleton_after_thick > 0] = [255, 0, 0]  # Blu
+    after_overlay[skeleton_after_thick > 0] = [255, 0, 0]  # Blu
 
-    # Ispessisci anche i gap per visibilità
+    # Ispessisci gap per visibilità
     skeleton_gap_thick = cv2.dilate(skeleton_gap, kernel_thick, iterations=1)
 
-    # Sovrascrivi gap in cyan (mostra dove il closing ha inventato percorsi)
-    final_overlay[skeleton_gap_thick > 0] = [255, 255, 0]  # Cyan
+    # Sovrascrivi gap in cyan (mostra dove il closing ha aggiunto percorsi)
+    after_overlay[skeleton_gap_thick > 0] = [255, 255, 0]  # Cyan
 
     # Disegna centroidi rossi sopra tutto
     for cy, cx in centroids:
-        cv2.circle(final_overlay, (cx, cy), dot_radius, (0, 0, 255), -1)
+        cv2.circle(after_overlay, (cx, cy), dot_radius, (0, 0, 255), -1)
 
-    cv2.imwrite(str(output_dir / 'step4_skeleton_overlay.png'), final_overlay)
-    print(f"     Salvato: step4_skeleton_overlay.png")
+    cv2.imwrite(str(output_dir / 'skeleton_after_closing_with_gaps.png'), after_overlay)
+    print(f"     Salvato: skeleton_after_closing_with_gaps.png")
     print(f"        - Fluorescenza 100% opacità")
-    print(f"        - Skeleton ispessito blu: {n_after:,} pixel")
-    print(f"        - Gap chiusi cyan: {n_gap:,} pixel")
+    print(f"        - Skeleton cicli finale blu: {n_after:,} pixel")
+    print(f"        - Gap aggiunti cyan: {n_gap:,} pixel")
     print(f"        - Centroidi rossi: {len(centroids)}")
-
-    # === VISUALIZZAZIONI LEGACY (compatibilità) ===
-    print("  5. Laminina con centroidi e gap...")
-    laminina_overlay = fluor_rgb.copy()
-
-    # Sovrapponi gap in blu chiaro (cyan)
-    laminina_overlay[pixels_added > 0] = [255, 255, 0]  # Cyan (blu chiaro)
-
-    # Disegna pallini rossi sopra
-    for cy, cx in centroids:
-        cv2.circle(laminina_overlay, (cx, cy), dot_radius, (0, 0, 255), -1)
-
-    cv2.imwrite(str(output_dir / 'laminina_with_centroids.png'), laminina_overlay)
-    print(f"     Salvato: laminina_with_centroids.png ({len(centroids)} fibre + gap cyan)")
-
-    print("  6. Circuiti chiusi con centroidi e gap...")
-    # Crea immagine RGB con solo i cicli chiusi validi (bianco su nero)
-    cycles_rgb = np.zeros_like(fluor_rgb)
-    cycles_rgb[valid_cycles_mask > 0] = [255, 255, 255]  # Bianco per cicli
-
-    # Sovrapponi gap in blu chiaro (cyan)
-    cycles_rgb[pixels_added > 0] = [255, 255, 0]  # Cyan (blu chiaro)
-
-    # Disegna pallini rossi sopra per i centroidi
-    for cy, cx in centroids:
-        cv2.circle(cycles_rgb, (cx, cy), dot_radius, (0, 0, 255), -1)
-
-    cv2.imwrite(str(output_dir / 'skeleton_with_centroids.png'), cycles_rgb)
-    print(f"     Salvato: skeleton_with_centroids.png ({len(centroids)} circuiti + gap cyan)")
-
-    # 7. Istogramma aree
-    print("  7. Istogramma distribuzione aree...")
-    areas = [f['area_px'] for f in fibers_data]
-
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.hist(areas, bins=50, color='steelblue', edgecolor='black', alpha=0.7)
-    ax.set_xlabel('Area (pixel²)', fontsize=12)
-    ax.set_ylabel('Numero di fibre', fontsize=12)
-    ax.set_title(f'Distribuzione Aree Fibre Muscolari (n={len(areas)})', fontsize=14, fontweight='bold')
-    ax.grid(axis='y', alpha=0.3)
-
-    # Statistiche sul grafico
-    mean_area = np.mean(areas)
-    median_area = np.median(areas)
-    ax.axvline(mean_area, color='red', linestyle='--', linewidth=2, label=f'Media: {mean_area:.0f} px²')
-    ax.axvline(median_area, color='orange', linestyle='--', linewidth=2, label=f'Mediana: {median_area:.0f} px²')
-    ax.legend()
-
-    plt.tight_layout()
-    plt.savefig(output_dir / 'area_distribution.png', dpi=150, bbox_inches='tight')
-    plt.close()
-    print(f"     Salvato: area_distribution.png")
 
 
 def save_statistics(fibers_data, mask, output_dir, image_shape, pixel_size_um=None):
@@ -706,9 +571,6 @@ Esempi:
 
     # STEP 6: Visualizzazioni
     print(f"\n{'STEP 6: VISUALIZZAZIONI':-^80}")
-
-    # Visualizzazione closing gaps
-    create_closing_visualization(mask_initial, mask_closed, output_dir)
 
     create_visualizations(
         fluorescence, mask_initial, mask_closed, skeleton, fibers_data, contours,
