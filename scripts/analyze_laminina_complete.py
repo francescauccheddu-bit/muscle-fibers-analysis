@@ -12,6 +12,7 @@ Output:
   - laminina_with_centroids.png       # Immagine originale + pallini rossi
   - skeleton_with_centroids.png       # Skeleton + pallini rossi
   - area_distribution.png             # Istogramma aree
+  - closing_gaps_visualization.png    # Visualizzazione gap chiusi (NUOVO!)
   - fibers_statistics.csv             # Statistiche per ogni fibra
   - summary_statistics.csv            # Statistiche sommarie
   - metadata.json                     # Metadati analisi
@@ -22,7 +23,8 @@ Uso:
         --output output_final \
         --kernel-size 15 \
         --min-fiber-area 1000 \
-        --dot-radius 5
+        --dot-radius 5 \
+        --pixel-size 0.41026
 """
 
 import argparse
@@ -189,6 +191,34 @@ def create_skeleton(mask):
     return skeleton
 
 
+def create_closing_visualization(mask_initial, mask_closed, output_dir):
+    """
+    Visualizza i pixel aggiunti dal morphological closing.
+    """
+    print("\nCreazione visualizzazione closing...")
+
+    # Calcola pixel aggiunti
+    pixels_added = cv2.subtract(mask_closed, mask_initial)
+
+    # Crea immagine RGB
+    # - Maschera originale: grigio
+    # - Pixel aggiunti: verde brillante
+    vis = np.zeros((mask_initial.shape[0], mask_initial.shape[1], 3), dtype=np.uint8)
+
+    # Maschera originale in grigio
+    vis[mask_initial > 0] = [128, 128, 128]
+
+    # Pixel aggiunti in verde brillante
+    vis[pixels_added > 0] = [0, 255, 0]
+
+    cv2.imwrite(str(output_dir / 'closing_gaps_visualization.png'), vis)
+
+    n_pixels_added = np.sum(pixels_added > 0)
+    print(f"  Salvato: closing_gaps_visualization.png")
+    print(f"  - Maschera originale: grigio")
+    print(f"  - Pixel aggiunti ({n_pixels_added:,}): verde")
+
+
 def create_visualizations(fluorescence, mask, skeleton, fibers_data, contours, output_dir, dot_radius=5):
     """
     Crea tutte le visualizzazioni.
@@ -249,9 +279,12 @@ def create_visualizations(fluorescence, mask, skeleton, fibers_data, contours, o
     print(f"     Salvato: area_distribution.png")
 
 
-def save_statistics(fibers_data, mask, output_dir, image_shape):
+def save_statistics(fibers_data, mask, output_dir, image_shape, pixel_size_um=None):
     """
     Salva statistiche in formato CSV.
+
+    Args:
+        pixel_size_um: Dimensione pixel in µm (es. 0.41026 per 2.4375 px/µm)
     """
     print("\nSalvataggio statistiche...")
 
@@ -261,6 +294,15 @@ def save_statistics(fibers_data, mask, output_dir, image_shape):
     # Ordina per area decrescente
     df_fibers = df_fibers.sort_values('area_px', ascending=False).reset_index(drop=True)
     df_fibers['fiber_id'] = df_fibers.index + 1
+
+    # Aggiungi colonne calibrate se disponibile
+    if pixel_size_um is not None:
+        df_fibers['area_um2'] = df_fibers['area_px'] * (pixel_size_um ** 2)
+        df_fibers['perimeter_um'] = df_fibers['perimeter_px'] * pixel_size_um
+        df_fibers['equiv_diameter_um'] = df_fibers['equiv_diameter_px'] * pixel_size_um
+        df_fibers['bbox_width_um'] = df_fibers['bbox_width'] * pixel_size_um
+        df_fibers['bbox_height_um'] = df_fibers['bbox_height'] * pixel_size_um
+        print(f"  Calibrazione applicata: 1 pixel = {pixel_size_um:.6f} µm")
 
     csv_path = output_dir / 'fibers_statistics.csv'
     df_fibers.to_csv(csv_path, index=False, float_format='%.2f')
@@ -302,6 +344,32 @@ def save_statistics(fibers_data, mask, output_dir, image_shape):
         ]
     }
 
+    # Aggiungi statistiche calibrate
+    if pixel_size_um is not None:
+        areas_um2 = df_fibers['area_um2'].values
+        summary['metric'].extend([
+            'pixel_size_um',
+            'total_area_um2',
+            'mean_area_um2',
+            'median_area_um2',
+            'std_area_um2',
+            'min_area_um2',
+            'max_area_um2',
+            'q25_area_um2',
+            'q75_area_um2'
+        ])
+        summary['value'].extend([
+            pixel_size_um,
+            np.sum(areas_um2),
+            np.mean(areas_um2),
+            np.median(areas_um2),
+            np.std(areas_um2),
+            np.min(areas_um2),
+            np.max(areas_um2),
+            np.percentile(areas_um2, 25),
+            np.percentile(areas_um2, 75)
+        ])
+
     df_summary = pd.DataFrame(summary)
     summary_path = output_dir / 'summary_statistics.csv'
     df_summary.to_csv(summary_path, index=False, float_format='%.2f')
@@ -311,7 +379,7 @@ def save_statistics(fibers_data, mask, output_dir, image_shape):
     metadata = {
         'n_fibers': int(len(df_fibers)),
         'image_dimensions': {'width': int(image_shape[1]), 'height': int(image_shape[0])},
-        'area_statistics': {
+        'area_statistics_px': {
             'mean': float(np.mean(areas)),
             'median': float(np.median(areas)),
             'std': float(np.std(areas)),
@@ -323,6 +391,23 @@ def save_statistics(fibers_data, mask, output_dir, image_shape):
         'mask_coverage_percent': float(np.sum(mask > 0) / (image_shape[0] * image_shape[1]) * 100)
     }
 
+    # Aggiungi calibrazione al metadata
+    if pixel_size_um is not None:
+        areas_um2 = df_fibers['area_um2'].values
+        metadata['calibration'] = {
+            'pixel_size_um': pixel_size_um,
+            'pixels_per_um': 1.0 / pixel_size_um
+        }
+        metadata['area_statistics_um2'] = {
+            'mean': float(np.mean(areas_um2)),
+            'median': float(np.median(areas_um2)),
+            'std': float(np.std(areas_um2)),
+            'min': float(np.min(areas_um2)),
+            'max': float(np.max(areas_um2)),
+            'q25': float(np.percentile(areas_um2, 25)),
+            'q75': float(np.percentile(areas_um2, 75))
+        }
+
     json_path = output_dir / 'metadata.json'
     with open(json_path, 'w') as f:
         json.dump(metadata, f, indent=2)
@@ -331,7 +416,7 @@ def save_statistics(fibers_data, mask, output_dir, image_shape):
     return df_fibers, df_summary
 
 
-def print_summary(fibers_data, image_shape):
+def print_summary(fibers_data, image_shape, pixel_size_um=None):
     """
     Stampa riepilogo a schermo.
     """
@@ -341,11 +426,23 @@ def print_summary(fibers_data, image_shape):
     print("RISULTATI ANALISI")
     print("="*80)
     print(f"Fibre muscolari identificate:  {len(fibers_data):,}")
-    print(f"Area media per fibra:          {np.mean(areas):,.0f} px²")
-    print(f"Area mediana per fibra:        {np.median(areas):,.0f} px²")
-    print(f"Deviazione standard:           {np.std(areas):,.0f} px²")
-    print(f"Range aree:                    {np.min(areas):,.0f} - {np.max(areas):,.0f} px²")
-    print(f"Quartili (Q1, Q3):             {np.percentile(areas, 25):,.0f}, {np.percentile(areas, 75):,.0f} px²")
+    print(f"\nArea (pixel):")
+    print(f"  Media:     {np.mean(areas):,.0f} px²")
+    print(f"  Mediana:   {np.median(areas):,.0f} px²")
+    print(f"  Dev Std:   {np.std(areas):,.0f} px²")
+    print(f"  Range:     {np.min(areas):,.0f} - {np.max(areas):,.0f} px²")
+    print(f"  Q1, Q3:    {np.percentile(areas, 25):,.0f}, {np.percentile(areas, 75):,.0f} px²")
+
+    if pixel_size_um is not None:
+        areas_um2 = [a * (pixel_size_um ** 2) for a in areas]
+        print(f"\nArea (µm²):")
+        print(f"  Media:     {np.mean(areas_um2):,.2f} µm²")
+        print(f"  Mediana:   {np.median(areas_um2):,.2f} µm²")
+        print(f"  Dev Std:   {np.std(areas_um2):,.2f} µm²")
+        print(f"  Range:     {np.min(areas_um2):,.2f} - {np.max(areas_um2):,.2f} µm²")
+        print(f"  Q1, Q3:    {np.percentile(areas_um2, 25):,.2f}, {np.percentile(areas_um2, 75):,.2f} µm²")
+        print(f"\nCalibrazione: 1 pixel = {pixel_size_um:.6f} µm ({1/pixel_size_um:.4f} px/µm)")
+
     print("="*80)
 
 
@@ -354,13 +451,24 @@ def main():
         description='Pipeline completa analisi fibre muscolari da fluorescenza laminina',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Esempio:
+Esempi:
+  # Analisi senza calibrazione (solo pixel)
   python scripts/analyze_laminina_complete.py \\
       --input data/laminina_originale.png \\
       --output output_final \\
       --kernel-size 15 \\
       --min-fiber-area 1000 \\
       --dot-radius 5
+
+  # Analisi con calibrazione (pixel + µm²)
+  # Per 2.4375 px/µm -> pixel-size = 1/2.4375 = 0.41026 µm
+  python scripts/analyze_laminina_complete.py \\
+      --input data/laminina_originale.png \\
+      --output output_final \\
+      --kernel-size 15 \\
+      --min-fiber-area 1000 \\
+      --dot-radius 5 \\
+      --pixel-size 0.41026
         """
     )
 
@@ -378,6 +486,8 @@ Esempio:
                        help='Block size adaptive threshold (default: 101)')
     parser.add_argument('--threshold-C', type=int, default=2,
                        help='Costante C adaptive threshold (default: 2)')
+    parser.add_argument('--pixel-size', type=float, default=None,
+                       help='Dimensione pixel in µm (es. 0.41026 per calibrazione 2.4375 px/µm). Se omesso, risultati solo in pixel.')
 
     args = parser.parse_args()
 
@@ -434,6 +544,10 @@ Esempio:
 
     # STEP 6: Visualizzazioni
     print(f"\n{'STEP 6: VISUALIZZAZIONI':-^80}")
+
+    # Visualizzazione closing gaps
+    create_closing_visualization(mask_initial, mask_closed, output_dir)
+
     create_visualizations(
         fluorescence, mask_closed, skeleton, fibers_data, contours,
         output_dir, dot_radius=args.dot_radius
@@ -442,11 +556,11 @@ Esempio:
     # STEP 7: Statistiche
     print(f"\n{'STEP 7: ESPORTAZIONE STATISTICHE':-^80}")
     df_fibers, df_summary = save_statistics(
-        fibers_data, mask_closed, output_dir, fluorescence.shape
+        fibers_data, mask_closed, output_dir, fluorescence.shape, pixel_size_um=args.pixel_size
     )
 
     # STEP 8: Riepilogo
-    print_summary(fibers_data, fluorescence.shape)
+    print_summary(fibers_data, fluorescence.shape, pixel_size_um=args.pixel_size)
 
     print(f"\n{'COMPLETATO':-^80}")
     print(f"Tutti i file sono stati salvati in: {output_dir}")
