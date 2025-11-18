@@ -94,7 +94,13 @@ def segment_adaptive_threshold(image, block_size=101, C=2):
 
 def apply_morphological_closing(mask, kernel_size=15):
     """
-    Applica morphological closing per chiudere gap.
+    Applica morphological closing sui CICLI (fibre muscolari) per chiudere gap nei
+    bordi interni delle fibre, NON sull'interstizio di laminina.
+
+    APPROCCIO:
+    1. Estrae i cicli (fibre) dalla maschera laminina tramite fill_holes
+    2. Applica closing ai cicli per chiudere gap nei bordi delle fibre
+    3. Ricostruisce la maschera laminina dall'inverso dei cicli chiusi
 
     NOTA IMPORTANTE - Chiusura Geometrica vs Anatomica:
     Il closing riempie i gap con forme ellittiche. Per gap molto grandi (>15 px),
@@ -111,12 +117,29 @@ def apply_morphological_closing(mask, kernel_size=15):
       --kernel-size 7   → forma più anatomica, ma gap grandi rimangono aperti
     """
     print(f"  Kernel: {kernel_size}×{kernel_size} ellittico")
+    print(f"  Strategia: closing sui cicli (fibre), non sulla laminina")
 
+    # STEP 1: Estrai i cicli (fibre) dalla maschera laminina
+    mask_bool = mask > 0
+    filled = ndi.binary_fill_holes(mask_bool).astype(np.uint8) * 255
+    cycles_initial = cv2.subtract(filled, mask)  # Cicli = fibre muscolari
+
+    print(f"    Cicli estratti dalla maschera iniziale")
+
+    # STEP 2: Applica closing ai cicli (fibre) per chiudere gap nei loro bordi
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
-    mask_closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+    cycles_closed = cv2.morphologyEx(cycles_initial, cv2.MORPH_CLOSE, kernel, iterations=1)
+
+    # STEP 3: Ricostruisci la maschera laminina dall'inverso dei cicli chiusi
+    # La laminina è tutto ciò che NON è fibra
+    mask_closed = cv2.bitwise_not(cycles_closed)
+
+    # Assicurati che il background esterno sia nero (non laminina)
+    # Usa la filled mask per identificare l'area interna
+    mask_closed = cv2.bitwise_and(mask_closed, filled)
 
     n_pixels_added = np.sum(cv2.subtract(mask_closed, mask) > 0)
-    print(f"    Pixel aggiunti: {n_pixels_added:,}")
+    print(f"    Pixel aggiunti alla laminina (da chiusura cicli): {n_pixels_added:,}")
 
     return mask_closed
 
