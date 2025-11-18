@@ -10,9 +10,9 @@ STEP 4: Calcolo statistiche ed esportazione
 
 Output:
   === VISUALIZZAZIONI FASI (con overlay trasparente) ===
-  - step1_segmentation_overlay.png    # Contorni verdi segmentazione su fluorescenza 50% trasparente
-  - step2_closing_overlay.png         # Contorni arancioni closing + gap cyan su fluorescenza trasparente
-  - step3_cycles_overlay.png          # Contorni blu cicli chiusi + centroidi rossi su trasparente
+  - step1_segmentation_overlay.png    # Contorni MAGENTA segmentazione su fluorescenza 50% trasparente
+  - step2_closing_overlay.png         # Contorni ARANCIONI closing + gap cyan su fluorescenza trasparente
+  - step3_cycles_overlay.png          # Contorni BLU cicli chiusi + centroidi rossi su trasparente
   - step4_skeleton_overlay.png        # Skeleton blu + centroidi rossi su trasparente
 
   === VISUALIZZAZIONI FINALI ===
@@ -256,10 +256,10 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
 
     # Trova e disegna SOLO i contorni della segmentazione iniziale
     contours_initial, _ = cv2.findContours(mask_initial, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    cv2.drawContours(seg_overlay, contours_initial, -1, (0, 255, 0), 2)  # Verde spessore 2
+    cv2.drawContours(seg_overlay, contours_initial, -1, (255, 0, 255), 2)  # Magenta spessore 2
 
     cv2.imwrite(str(output_dir / 'step1_segmentation_overlay.png'), seg_overlay)
-    print(f"     Salvato: step1_segmentation_overlay.png (contorni verdi = {len(contours_initial)} oggetti)")
+    print(f"     Salvato: step1_segmentation_overlay.png (contorni magenta = {len(contours_initial)} oggetti)")
 
     # === FASE 2: Morphological Closing ===
     print("  2. Morphological closing overlay...")
