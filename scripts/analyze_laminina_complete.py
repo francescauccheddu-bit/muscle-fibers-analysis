@@ -12,8 +12,10 @@ Output:
   === VISUALIZZAZIONI ===
   - skeleton_before_closing.png               # Skeleton cicli PRIMA del closing (blu) su fluorescenza 100%
                                                # NO centroidi, NO rametti
-  - skeleton_after_closing_with_gaps.png      # Skeleton cicli DOPO del closing (blu) + gap aggiunti (cyan) + centroidi (rossi)
+  - skeleton_after_closing_with_gaps.png      # Skeleton cicli DOPO del closing (blu) + gap aggiunti (cyan) + centroidi colorati
                                                # su fluorescenza 100%
+                                               # Centroidi ROSSI: cicli già esistenti prima del closing
+                                               # Centroidi VERDI: cicli NUOVI chiusi dal morphological closing
 
   === DATI ===
   - fibers_statistics.csv             # Statistiche per ogni fibra
@@ -264,7 +266,7 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
     print(f"        - NO centroidi")
 
     # ========================================================================
-    # IMMAGINE 2: Skeleton DOPO del closing + gap cyan + centroidi rossi
+    # IMMAGINE 2: Skeleton DOPO del closing + gap cyan + centroidi colorati
     # ========================================================================
     print("  2. Skeleton cicli DOPO del closing + gap + centroidi...")
 
@@ -279,7 +281,35 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
     skeleton_gap = cv2.subtract(skeleton_after, skeleton_before)
     n_gap = np.sum(skeleton_gap > 0)
 
-    # Crea immagine: fluorescenza + skeleton blu + gap cyan + centroidi rossi
+    # Identifica cicli PRIMA del closing per distinguere nuovi vs esistenti
+    print("     Identificazione cicli nuovi vs esistenti...")
+    contours_before, _ = cv2.findContours(cycles_before, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Per ogni fibra (dopo closing), verifica se il centroide cade in un ciclo che esisteva prima
+    new_fibers = []  # Cicli nuovi (chiusi dal closing)
+    existing_fibers = []  # Cicli già esistenti prima
+
+    for fiber in fibers_data:
+        cx, cy = fiber['centroid_x'], fiber['centroid_y']
+        point = (int(cx), int(cy))
+
+        # Verifica se il centroide cade dentro un ciclo che esisteva prima
+        is_existing = False
+        for contour in contours_before:
+            result = cv2.pointPolygonTest(contour, point, False)
+            if result >= 0:  # Punto dentro o sul contorno
+                is_existing = True
+                break
+
+        if is_existing:
+            existing_fibers.append(fiber)
+        else:
+            new_fibers.append(fiber)
+
+    print(f"        Cicli già esistenti prima: {len(existing_fibers)}")
+    print(f"        Cicli NUOVI (chiusi dal closing): {len(new_fibers)}")
+
+    # Crea immagine: fluorescenza + skeleton blu + gap cyan + centroidi colorati
     after_overlay = fluor_rgb.copy()  # 100% opacità
 
     # Ispessisci skeleton dopo closing
@@ -294,16 +324,24 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
     # Sovrascrivi gap in cyan (mostra dove il closing ha aggiunto percorsi)
     after_overlay[skeleton_gap_thick > 0] = [255, 255, 0]  # Cyan
 
-    # Disegna centroidi rossi sopra tutto
-    for cy, cx in centroids:
-        cv2.circle(after_overlay, (cx, cy), dot_radius, (0, 0, 255), -1)
+    # Disegna centroidi con colori diversi
+    # ROSSO: cicli già esistenti prima del closing
+    for fiber in existing_fibers:
+        cy, cx = int(fiber['centroid_y']), int(fiber['centroid_x'])
+        cv2.circle(after_overlay, (cx, cy), dot_radius, (0, 0, 255), -1)  # Rosso
+
+    # VERDE: cicli NUOVI chiusi dal morphological closing
+    for fiber in new_fibers:
+        cy, cx = int(fiber['centroid_y']), int(fiber['centroid_x'])
+        cv2.circle(after_overlay, (cx, cy), dot_radius, (0, 255, 0), -1)  # Verde
 
     cv2.imwrite(str(output_dir / 'skeleton_after_closing_with_gaps.png'), after_overlay)
     print(f"     Salvato: skeleton_after_closing_with_gaps.png")
     print(f"        - Fluorescenza 100% opacità")
     print(f"        - Skeleton cicli finale blu: {n_after:,} pixel")
     print(f"        - Gap aggiunti cyan: {n_gap:,} pixel")
-    print(f"        - Centroidi rossi: {len(centroids)}")
+    print(f"        - Centroidi ROSSI: {len(existing_fibers)} (cicli già esistenti)")
+    print(f"        - Centroidi VERDI: {len(new_fibers)} (cicli nuovi chiusi dal closing)")
 
 
 def save_statistics(fibers_data, mask, output_dir, image_shape, pixel_size_um=None):
