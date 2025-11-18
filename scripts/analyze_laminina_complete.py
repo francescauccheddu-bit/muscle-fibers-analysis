@@ -16,6 +16,7 @@ Output:
   - skeleton_after_closing_with_gaps.png      # Contorni CICLI CHIUSI DOPO del closing (blu) + gap aggiunti (cyan) + centroidi colorati
                                                # su fluorescenza 100%
                                                # Solo anelli di laminina chiusi, NO rametti interni
+                                               # Cicli NUOVI: riempiti arancione/salmone chiaro (35% trasparenza)
                                                # Centroidi al centro degli anelli
                                                # Centroidi ROSSI: cicli già esistenti prima del closing
                                                # Centroidi GIALLI: cicli NUOVI chiusi dal morphological closing
@@ -317,6 +318,36 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
     # Crea immagine: fluorescenza + contorni cicli chiusi blu + gap cyan + centroidi colorati
     after_overlay = fluor_rgb.copy()  # 100% opacità
 
+    # RIEMPI i cicli NUOVI con colore semi-trasparente per evidenziarli
+    if len(new_fibers) > 0:
+        print(f"     Riempimento cicli nuovi con colore semi-trasparente...")
+
+        # Crea maschera per cicli nuovi
+        new_cycles_mask = np.zeros_like(cycles_after)
+
+        # Per ogni fibra nuova, trova il contorno corrispondente e riempilo
+        for fiber in new_fibers:
+            cx, cy = int(fiber['centroid_x']), int(fiber['centroid_y'])
+            point = (cx, cy)
+
+            # Trova quale contorno contiene questo centroide
+            for contour in contours_cycles_after:
+                result = cv2.pointPolygonTest(contour, point, False)
+                if result >= 0:  # Centroide dentro questo contorno
+                    cv2.drawContours(new_cycles_mask, [contour], -1, 255, -1)  # Riempi
+                    break
+
+        # Crea overlay semi-trasparente arancione/salmone chiaro
+        overlay_color = np.zeros_like(after_overlay)
+        overlay_color[new_cycles_mask > 0] = [100, 200, 255]  # Arancione/salmone chiaro in BGR
+
+        # Mischia con trasparenza 35%
+        alpha = 0.35
+        after_overlay[new_cycles_mask > 0] = (
+            alpha * overlay_color[new_cycles_mask > 0] +
+            (1 - alpha) * after_overlay[new_cycles_mask > 0]
+        ).astype(np.uint8)
+
     # Disegna contorni cicli chiusi dopo closing in blu
     cv2.drawContours(after_overlay, contours_cycles_after, -1, (255, 0, 0), 2)  # Blu
 
@@ -339,6 +370,7 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
     print(f"        - Fluorescenza 100% opacità")
     print(f"        - Contorni cicli chiusi blu: {len(contours_cycles_after)} anelli")
     print(f"        - Gap aggiunti cyan: {n_gap:,} pixel")
+    print(f"        - Cicli NUOVI riempiti arancione/salmone chiaro (35% trasparenza)")
     print(f"        - Centroidi ROSSI: {len(existing_fibers)} (cicli già esistenti)")
     print(f"        - Centroidi GIALLI: {len(new_fibers)} (cicli nuovi chiusi dal closing)")
     print(f"        - Solo anelli di laminina chiusi, NO rametti interni")
