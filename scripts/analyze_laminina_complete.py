@@ -319,9 +319,9 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
     print(f"     Salvato: step3_cycles_overlay.png ({len(fibers_data)} contorni blu + centroidi rossi 1:1)")
 
     # === FASE 4: Skeletonizzazione ===
-    print("  4. Skeleton su sfondo nero...")
-    # Crea immagine NERA (no fluorescenza trasparente)
-    skeleton_overlay = np.zeros_like(fluor_rgb)
+    print("  4. Skeleton overlay su fluorescenza originale (100% opacità)...")
+    # Usa immagine originale al 100% (NO trasparenza)
+    skeleton_overlay = fluor_rgb.copy()
 
     # Skeleton in blu brillante
     skeleton_overlay[skeleton > 0] = [255, 0, 0]  # Blu
@@ -332,7 +332,7 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
 
     cv2.imwrite(str(output_dir / 'step4_skeleton_overlay.png'), skeleton_overlay)
     n_skeleton_pixels = np.sum(skeleton > 0)
-    print(f"     Salvato: step4_skeleton_overlay.png (sfondo NERO, skeleton blu, {n_skeleton_pixels:,} pixel)")
+    print(f"     Salvato: step4_skeleton_overlay.png (fluorescenza 100%, skeleton blu, {n_skeleton_pixels:,} pixel)")
 
     # === VISUALIZZAZIONI LEGACY (compatibilità) ===
     print("  5. Laminina con centroidi e gap...")
