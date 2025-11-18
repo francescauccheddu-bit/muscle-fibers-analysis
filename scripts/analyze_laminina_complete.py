@@ -18,7 +18,7 @@ Output:
                                                # Skeleton forma anelli chiusi vicino ai bordi della laminina
                                                # Centroidi al centro degli anelli
                                                # Centroidi ROSSI: cicli già esistenti prima del closing
-                                               # Centroidi VERDI: cicli NUOVI chiusi dal morphological closing
+                                               # Centroidi GIALLI: cicli NUOVI chiusi dal morphological closing
 
   === DATI ===
   - fibers_statistics.csv             # Statistiche per ogni fibra
@@ -332,10 +332,10 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
         cy, cx = int(fiber['centroid_y']), int(fiber['centroid_x'])
         cv2.circle(after_overlay, (cx, cy), dot_radius, (0, 0, 255), -1)  # Rosso
 
-    # VERDE: cicli NUOVI chiusi dal morphological closing
+    # GIALLO: cicli NUOVI chiusi dal morphological closing
     for fiber in new_fibers:
         cy, cx = int(fiber['centroid_y']), int(fiber['centroid_x'])
-        cv2.circle(after_overlay, (cx, cy), dot_radius, (0, 255, 0), -1)  # Verde
+        cv2.circle(after_overlay, (cx, cy), dot_radius, (0, 255, 255), -1)  # Giallo (contrasta con verde laminina)
 
     cv2.imwrite(str(output_dir / 'skeleton_after_closing_with_gaps.png'), after_overlay)
     print(f"     Salvato: skeleton_after_closing_with_gaps.png")
@@ -343,7 +343,7 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
     print(f"        - Skeleton laminina finale blu: {n_after:,} pixel (forma cicli chiusi)")
     print(f"        - Gap aggiunti cyan: {n_gap:,} pixel")
     print(f"        - Centroidi ROSSI: {len(existing_fibers)} (cicli già esistenti)")
-    print(f"        - Centroidi VERDI: {len(new_fibers)} (cicli nuovi chiusi dal closing)")
+    print(f"        - Centroidi GIALLI: {len(new_fibers)} (cicli nuovi chiusi dal closing)")
     print(f"        - Skeleton vicino ai bordi della laminina, forma anelli chiusi con centroidi al centro")
 
 
