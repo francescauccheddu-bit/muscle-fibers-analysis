@@ -96,10 +96,19 @@ def apply_morphological_closing(mask, kernel_size=15):
     """
     Applica morphological closing per chiudere gap.
 
-    NOTA: Il closing riempie i gap con forme ellittiche. Per gap molto grandi (>15 px),
+    NOTA IMPORTANTE - Chiusura Geometrica vs Anatomica:
+    Il closing riempie i gap con forme ellittiche. Per gap molto grandi (>15 px),
     la forma chiusa può non corrispondere alla forma biologica originale (il closing "inventa"
-    una chiusura geometrica, non biologica). Questo è normale e intrinseco all'algoritmo.
-    Ridurre --kernel-size se si vuole maggiore fedeltà alla forma originale (ma più gap aperti).
+    una chiusura geometrica, non biologica). I cicli chiusi perdono la loro circolarità
+    naturale e diventano più geometrici/ellittici.
+
+    RACCOMANDAZIONE: Se i cicli chiusi non mantengono la forma anatomica originale,
+    ridurre --kernel-size a valori più piccoli (es. 7, 9, 11) per maggiore fedeltà
+    alla forma biologica, accettando che alcuni gap rimangano aperti.
+
+    ESEMPIO:
+      --kernel-size 15  → chiude gap grandi, ma forma geometrica
+      --kernel-size 7   → forma più anatomica, ma gap grandi rimangono aperti
     """
     print(f"  Kernel: {kernel_size}×{kernel_size} ellittico")
 
@@ -264,27 +273,33 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
     seg_overlay = fluor_rgb.copy()
     seg_overlay = (seg_overlay * 0.5).astype(np.uint8)  # 50% trasparenza
 
-    # Trova e disegna SOLO i contorni ESTERNI della segmentazione iniziale
-    contours_initial, _ = cv2.findContours(mask_initial, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    cv2.drawContours(seg_overlay, contours_initial, -1, (255, 0, 255), 3)  # Magenta spessore 3
+    # Sovrapponi maschera in magenta semi-trasparente
+    seg_overlay[mask_initial > 0] = [200, 0, 200]  # Magenta brillante
 
     cv2.imwrite(str(output_dir / 'step1_segmentation_overlay.png'), seg_overlay)
-    print(f"     Salvato: step1_segmentation_overlay.png (contorni magenta, {len(contours_initial)} componenti)")
+    n_pixels_seg = np.sum(mask_initial > 0)
+    print(f"     Salvato: step1_segmentation_overlay.png (maschera magenta, {n_pixels_seg:,} pixel)")
 
     # === FASE 2: Morphological Closing ===
     print("  2. Morphological closing overlay...")
     closing_overlay = fluor_rgb.copy()
     closing_overlay = (closing_overlay * 0.5).astype(np.uint8)  # 50% trasparenza
 
-    # Trova e disegna SOLO i contorni ESTERNI della maschera chiusa
-    contours_closed, _ = cv2.findContours(mask_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    cv2.drawContours(closing_overlay, contours_closed, -1, (0, 165, 255), 3)  # Arancione spessore 3
+    # Sovrapponi maschera chiusa in arancione
+    closing_overlay[mask_closed > 0] = [0, 140, 255]  # Arancione
 
-    # Evidenzia gap aggiunti in cyan brillante
-    closing_overlay[pixels_added > 0] = [255, 255, 0]  # Cyan
+    # Calcola i gap chiusi: pixel aggiunti che NON sono interni ai cicli
+    # Identifichiamo i gap reali usando erosione
+    kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    mask_closed_eroded = cv2.erode(mask_closed, kernel_small, iterations=2)
+    gap_pixels = pixels_added & (mask_closed_eroded == 0)  # Solo pixel vicini ai bordi
+
+    # Evidenzia solo i gap sui bordi in cyan brillante
+    closing_overlay[gap_pixels > 0] = [255, 255, 0]  # Cyan
 
     cv2.imwrite(str(output_dir / 'step2_closing_overlay.png'), closing_overlay)
-    print(f"     Salvato: step2_closing_overlay.png (contorni arancioni, cyan = gap, {len(contours_closed)} componenti)")
+    n_gap_pixels = np.sum(gap_pixels > 0)
+    print(f"     Salvato: step2_closing_overlay.png (maschera arancione + gap cyan sui bordi, {n_gap_pixels:,} pixel cyan)")
 
     # === FASE 3: Cicli Chiusi (solo quelli validi con centroidi) ===
     print("  3. Cicli chiusi overlay con contorni blu...")
@@ -318,21 +333,30 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
     cv2.imwrite(str(output_dir / 'step3_cycles_overlay.png'), cycles_overlay)
     print(f"     Salvato: step3_cycles_overlay.png ({len(fibers_data)} contorni blu + centroidi rossi 1:1)")
 
-    # === FASE 4: Skeletonizzazione ===
+    # === FASE 4: Skeletonizzazione (SOLO CICLI CHIUSI, senza rametti) ===
     print("  4. Skeleton overlay su fluorescenza originale (100% opacità)...")
     # Usa immagine originale al 100% (NO trasparenza)
     skeleton_overlay = fluor_rgb.copy()
 
+    # Crea skeleton SOLO dei cicli chiusi (non dell'intera maschera)
+    # Questo elimina i rametti interni che collegano i cicli
+    mask_bool = mask_closed > 0
+    filled = ndi.binary_fill_holes(mask_bool).astype(np.uint8) * 255
+    cycles_only = cv2.subtract(filled, mask_closed)
+
+    # Skeleton solo dei cicli
+    skeleton_cycles = morphology.skeletonize(cycles_only > 0).astype(np.uint8) * 255
+
     # Skeleton in blu brillante
-    skeleton_overlay[skeleton > 0] = [255, 0, 0]  # Blu
+    skeleton_overlay[skeleton_cycles > 0] = [255, 0, 0]  # Blu
 
     # Disegna pallini rossi per i centroidi
     for cy, cx in centroids:
         cv2.circle(skeleton_overlay, (cx, cy), dot_radius, (0, 0, 255), -1)
 
     cv2.imwrite(str(output_dir / 'step4_skeleton_overlay.png'), skeleton_overlay)
-    n_skeleton_pixels = np.sum(skeleton > 0)
-    print(f"     Salvato: step4_skeleton_overlay.png (fluorescenza 100%, skeleton blu, {n_skeleton_pixels:,} pixel)")
+    n_skeleton_pixels = np.sum(skeleton_cycles > 0)
+    print(f"     Salvato: step4_skeleton_overlay.png (fluorescenza 100%, skeleton cicli blu, {n_skeleton_pixels:,} pixel, NO rametti)")
 
     # === VISUALIZZAZIONI LEGACY (compatibilità) ===
     print("  5. Laminina con centroidi e gap...")
