@@ -338,10 +338,14 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
     print(f"        Cicli già esistenti prima: {len(existing_fibers)}")
     print(f"        Cicli NUOVI (chiusi dal closing): {len(new_fibers)}")
 
-    # Crea immagine: fluorescenza + contorni cicli chiusi blu + gap cyan + centroidi colorati
+    # Crea immagine: fluorescenza + gap cyan + riempimento cicli nuovi + bordi + centroidi
     after_overlay = fluor_rgb.copy()  # 100% opacità
 
-    # RIEMPI i cicli NUOVI con colore semi-trasparente per evidenziarli
+    # STEP 1: Disegna prima i pixel aggiunti (gap chiusi) in cyan
+    # Così verranno parzialmente sovrascritti dal riempimento dei cicli nuovi
+    after_overlay[pixels_added > 0] = [255, 255, 0]  # Cyan
+
+    # STEP 2: RIEMPI i cicli NUOVI con colore semi-trasparente per evidenziarli (VA SOPRA i gap)
     if len(new_fibers) > 0:
         print(f"     Riempimento cicli nuovi con colore semi-trasparente...")
 
@@ -371,11 +375,8 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
             (1 - alpha) * after_overlay[new_cycles_mask > 0]
         ).astype(np.uint8)
 
-    # Disegna bordi INTERNI laminina dopo closing in blu
+    # STEP 3: Disegna bordi INTERNI laminina dopo closing in blu (VA SOPRA tutto)
     cv2.drawContours(after_overlay, inner_contours_after, -1, (255, 0, 0), 2)  # Blu
-
-    # Sovrascrivi pixel aggiunti (gap chiusi) in cyan
-    after_overlay[pixels_added > 0] = [255, 255, 0]  # Cyan
 
     # Disegna centroidi con colori diversi
     # ROSSO: cicli già esistenti prima del closing
