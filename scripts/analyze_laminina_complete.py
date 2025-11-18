@@ -10,10 +10,10 @@ STEP 4: Calcolo statistiche ed esportazione
 
 Output:
   === VISUALIZZAZIONI FASI (con overlay trasparente) ===
-  - step1_segmentation_overlay.png    # Segmentazione iniziale (verde) su fluorescenza 50% trasparente
-  - step2_closing_overlay.png         # Closing (giallo) + gap (cyan) su fluorescenza trasparente
-  - step3_cycles_overlay.png          # Contorni cicli chiusi (blu) + centroidi (rosso) su trasparente
-  - step4_skeleton_overlay.png        # Skeleton (blu) + centroidi (rosso) su trasparente
+  - step1_segmentation_overlay.png    # Contorni verdi segmentazione su fluorescenza 50% trasparente
+  - step2_closing_overlay.png         # Contorni arancioni closing + gap cyan su fluorescenza trasparente
+  - step3_cycles_overlay.png          # Contorni blu cicli chiusi + centroidi rossi su trasparente
+  - step4_skeleton_overlay.png        # Skeleton blu + centroidi rossi su trasparente
 
   === VISUALIZZAZIONI FINALI ===
   - laminina_with_centroids.png       # Fluorescenza + gap cyan + centroidi rossi
@@ -253,18 +253,28 @@ def create_visualizations(fluorescence, mask_initial, mask_closed, skeleton, fib
     print("  1. Segmentazione iniziale overlay...")
     seg_overlay = fluor_rgb.copy()
     seg_overlay = (seg_overlay * 0.5).astype(np.uint8)  # 50% trasparenza
-    seg_overlay[mask_initial > 0] = [0, 255, 0]  # Verde per maschera iniziale
+
+    # Trova e disegna SOLO i contorni della segmentazione iniziale
+    contours_initial, _ = cv2.findContours(mask_initial, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cv2.drawContours(seg_overlay, contours_initial, -1, (0, 255, 0), 2)  # Verde spessore 2
+
     cv2.imwrite(str(output_dir / 'step1_segmentation_overlay.png'), seg_overlay)
-    print(f"     Salvato: step1_segmentation_overlay.png (verde = segmentazione)")
+    print(f"     Salvato: step1_segmentation_overlay.png (contorni verdi = {len(contours_initial)} oggetti)")
 
     # === FASE 2: Morphological Closing ===
     print("  2. Morphological closing overlay...")
     closing_overlay = fluor_rgb.copy()
     closing_overlay = (closing_overlay * 0.5).astype(np.uint8)  # 50% trasparenza
-    closing_overlay[mask_closed > 0] = [255, 200, 0]  # Giallo per maschera chiusa
+
+    # Trova e disegna SOLO i contorni della maschera chiusa
+    contours_closed, _ = cv2.findContours(mask_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cv2.drawContours(closing_overlay, contours_closed, -1, (0, 200, 255), 2)  # Arancione spessore 2
+
+    # Gap aggiunti in cyan brillante
     closing_overlay[pixels_added > 0] = [255, 255, 0]  # Cyan per gap aggiunti
+
     cv2.imwrite(str(output_dir / 'step2_closing_overlay.png'), closing_overlay)
-    print(f"     Salvato: step2_closing_overlay.png (giallo = closing, cyan = gap)")
+    print(f"     Salvato: step2_closing_overlay.png (arancione = contorni closing, cyan = gap)")
 
     # === FASE 3: Cicli Chiusi (solo quelli validi con centroidi) ===
     print("  3. Cicli chiusi overlay con contorni blu...")
